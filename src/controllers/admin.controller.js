@@ -1,6 +1,7 @@
-const { User, Prediction, Payment } = require('../models');
+const { User, Prediction, Payment, PushSubscription, NotificationHistory } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
+const NotificationService = require('../services/notification.service');
 
 // Dashboard stats
 exports.getDashboardStats = async (req, res) => {
@@ -51,6 +52,29 @@ exports.getDashboardStats = async (req, res) => {
       ? ((wonCount / totalWithResults) * 100).toFixed(1) 
       : 89.0;
 
+    // Estadísticas de notificaciones
+    let notificationStats = {
+      activeSubscriptions: 0,
+      notificationsSent24h: 0
+    };
+
+    try {
+      notificationStats.activeSubscriptions = await PushSubscription.count({ 
+        where: { isActive: true } 
+      });
+      
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      
+      notificationStats.notificationsSent24h = await NotificationHistory.count({
+        where: {
+          sent_at: { [Op.gte]: yesterday }
+        }
+      });
+    } catch (error) {
+      console.log('Error obteniendo stats de notificaciones:', error.message);
+    }
+
     // Respuesta
     const stats = {
       totalUsers,
@@ -61,7 +85,8 @@ exports.getDashboardStats = async (req, res) => {
       activeUsers: Math.floor(totalUsers * 0.7),
       wonPredictions: wonCount,
       lostPredictions: lostCount,
-      pendingPredictions: await Prediction.count({ where: { result: 'PENDING' } })
+      pendingPredictions: await Prediction.count({ where: { result: 'PENDING' } }),
+      ...notificationStats
     };
 
     console.log('✅ Stats generadas:', stats);
@@ -147,6 +172,16 @@ exports.createPrediction = async (req, res) => {
       ...req.body,
       matchTime: req.body.matchTime || new Date()
     });
+
+    // Si es hot, enviar notificación automáticamente
+    if (prediction.isHot) {
+      try {
+        await NotificationService.sendHotPrediction(prediction.id);
+        console.log('✅ Notificación de predicción hot enviada');
+      } catch (error) {
+        console.error('Error enviando notificación hot:', error);
+      }
+    }
     
     res.status(201).json({
       success: true,
@@ -176,7 +211,20 @@ exports.updatePrediction = async (req, res) => {
       });
     }
 
+    // Guardar estado anterior
+    const wasHot = prediction.isHot;
+
     await prediction.update(req.body);
+
+    // Si se cambió a hot, enviar notificación
+    if (!wasHot && prediction.isHot) {
+      try {
+        await NotificationService.sendHotPrediction(prediction.id);
+        console.log('✅ Notificación de predicción hot enviada');
+      } catch (error) {
+        console.error('Error enviando notificación hot:', error);
+      }
+    }
 
     res.json({
       success: true,
@@ -214,8 +262,21 @@ exports.updateResult = async (req, res) => {
       });
     }
 
+    // Guardar resultado anterior
+    const previousResult = prediction.result;
+
     prediction.result = result;
     await prediction.save();
+
+    // Si el resultado cambió de PENDING a WON/LOST, enviar notificación
+    if (previousResult === 'PENDING' && ['WON', 'LOST'].includes(result)) {
+      try {
+        await NotificationService.sendPredictionResult(prediction.id);
+        console.log('✅ Notificación de resultado enviada');
+      } catch (error) {
+        console.error('Error enviando notificación de resultado:', error);
+      }
+    }
 
     res.json({
       success: true,
@@ -264,13 +325,24 @@ exports.deletePrediction = async (req, res) => {
 // Listar usuarios
 exports.getUsers = async (req, res) => {
   try {
-    const { isPremium, isVerified, search } = req.query;
+    const { isPremium, isVerified, search, hasNotifications } = req.query;
     
     const where = {};
+    const include = [];
     
     // Filtros
     if (isPremium !== undefined) where.isPremium = isPremium === 'true';
     if (isVerified !== undefined) where.isVerified = isVerified === 'true';
+    
+    // Si se quiere filtrar por notificaciones
+    if (hasNotifications === 'true') {
+      include.push({
+        model: PushSubscription,
+        where: { isActive: true },
+        required: true,
+        attributes: []
+      });
+    }
     
     // Búsqueda simple
     if (search) {
@@ -291,7 +363,21 @@ exports.getUsers = async (req, res) => {
     
     const users = await User.findAll({
       where,
-      attributes: { exclude: ['password', 'verificationCode'] },
+      include,
+      attributes: { 
+        exclude: ['password', 'verificationCode'],
+        include: [
+          [
+            sequelize.literal(`(
+              SELECT COUNT(*) 
+              FROM push_subscriptions 
+              WHERE user_id = "User"."id" 
+              AND is_active = true
+            )`),
+            'activeSubscriptions'
+          ]
+        ]
+      },
       order: [['created_at', 'DESC']]
     });
 
@@ -539,6 +625,115 @@ exports.getDetailedStats = async (req, res) => {
       success: false,
       message: 'Error al obtener estadísticas detalladas',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// NUEVOS MÉTODOS PARA NOTIFICACIONES
+
+// Obtener estadísticas de notificaciones
+exports.getNotificationStats = async (req, res) => {
+  try {
+    const stats = {
+      totalSubscriptions: await PushSubscription.count(),
+      activeSubscriptions: await PushSubscription.count({ where: { isActive: true } }),
+      totalNotifications: await NotificationHistory.count(),
+      notificationsToday: 0,
+      deliveryRate: 0,
+      clickRate: 0
+    };
+
+    // Notificaciones hoy
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    stats.notificationsToday = await NotificationHistory.count({
+      where: {
+        sent_at: { [Op.gte]: today }
+      }
+    });
+
+    // Tasas
+    const delivered = await NotificationHistory.count({ where: { delivered: true } });
+    const clicked = await NotificationHistory.count({ where: { clicked: true } });
+    
+    if (stats.totalNotifications > 0) {
+      stats.deliveryRate = ((delivered / stats.totalNotifications) * 100).toFixed(2);
+      stats.clickRate = ((clicked / stats.totalNotifications) * 100).toFixed(2);
+    }
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error obteniendo stats de notificaciones:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener estadísticas',
+      error: error.message
+    });
+  }
+};
+
+// Enviar notificación personalizada
+exports.sendCustomNotification = async (req, res) => {
+  try {
+    const { userIds, title, body, url, sendToAll = false } = req.body;
+
+    if (!title || !body) {
+      return res.status(400).json({
+        success: false,
+        message: 'Título y mensaje son requeridos'
+      });
+    }
+
+    let targetUserIds = userIds;
+
+    // Si sendToAll, obtener todos los usuarios con notificaciones activas
+    if (sendToAll) {
+      const users = await User.findAll({
+        include: [{
+          model: PushSubscription,
+          where: { isActive: true },
+          required: true,
+          attributes: []
+        }],
+        attributes: ['id']
+      });
+      targetUserIds = users.map(u => u.id);
+    }
+
+    if (!targetUserIds || targetUserIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No hay usuarios para notificar'
+      });
+    }
+
+    const result = await NotificationService.sendToUsers(
+      targetUserIds,
+      NotificationService.NOTIFICATION_TYPES.CUSTOM,
+      {
+        title,
+        body,
+        data: { url: url || '/predictions' }
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'Notificación personalizada enviada',
+      data: {
+        ...result,
+        totalUsers: targetUserIds.length
+      }
+    });
+  } catch (error) {
+    console.error('Error enviando notificación personalizada:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al enviar notificación',
+      error: error.message
     });
   }
 };

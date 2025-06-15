@@ -70,7 +70,13 @@ app.get('/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    database: sequelize.options.database
+    database: sequelize.options.database,
+    features: {
+      predictions: true,
+      authentication: true,
+      pushNotifications: true,
+      payments: false // Pendiente
+    }
   });
 });
 
@@ -92,15 +98,24 @@ app.get('/', (req, res) => {
       predictions: {
         list: 'GET /api/predictions',
         single: 'GET /api/predictions/:id',
-        byDate: 'GET /api/predictions/date/:date'
+        byDate: 'GET /api/predictions/date/:date',
+        unlock: 'POST /api/predictions/:id/unlock'
       },
       users: {
         profile: 'GET /api/users/profile',
         updatePreferences: 'PUT /api/users/preferences',
         paymentHistory: 'GET /api/users/payments'
       },
+      notifications: {
+        vapidKey: 'GET /api/notifications/vapid-public-key',
+        subscribe: 'POST /api/notifications/subscribe',
+        unsubscribe: 'POST /api/notifications/unsubscribe',
+        test: 'POST /api/notifications/test',
+        history: 'GET /api/notifications/history'
+      },
       admin: {
         stats: 'GET /api/admin/stats',
+        notificationStats: 'GET /api/admin/notifications/stats',
         predictions: {
           create: 'POST /api/admin/predictions',
           update: 'PUT /api/admin/predictions/:id',
@@ -111,6 +126,11 @@ app.get('/', (req, res) => {
           list: 'GET /api/admin/users',
           update: 'PUT /api/admin/users/:id',
           togglePremium: 'PUT /api/admin/users/:id/premium'
+        },
+        notifications: {
+          sendCustom: 'POST /api/admin/notifications/custom',
+          sendHotPrediction: 'POST /api/admin/notifications/hot-prediction/:id',
+          sendResult: 'POST /api/admin/notifications/prediction-result/:id'
         }
       },
       payments: {
@@ -128,6 +148,7 @@ app.use('/api/auth', require('./src/routes/auth.routes'));
 app.use('/api/predictions', require('./src/routes/predictions.routes'));
 app.use('/api/users', require('./src/routes/users.routes'));
 app.use('/api/admin', require('./src/routes/admin.routes'));
+app.use('/api/notifications', require('./src/routes/notifications.routes'));
 // app.use('/api/payments', require('./src/routes/payments.routes')); // Descomentar cuando esté listo
 
 // Manejo de rutas no encontradas
@@ -194,6 +215,9 @@ app.use((err, req, res, next) => {
 // Puerto y arranque del servidor
 const PORT = process.env.PORT || 3000;
 
+// Variable para los jobs
+let notificationJobs = null;
+
 // Función para arrancar el servidor
 const startServer = async () => {
   try {
@@ -205,17 +229,33 @@ const startServer = async () => {
     await sequelize.sync({ alter: false });
     console.log('✅ Modelos sincronizados');
     
+    // Iniciar jobs de notificaciones
+    if (process.env.NODE_ENV === 'production' || process.env.ENABLE_NOTIFICATION_JOBS === 'true') {
+      try {
+        const NotificationJobs = require('./src/jobs/notificationJobs');
+        NotificationJobs.init();
+        notificationJobs = NotificationJobs;
+        console.log('✅ Jobs de notificaciones iniciados');
+      } catch (error) {
+        console.error('⚠️ Error iniciando jobs de notificaciones:', error.message);
+      }
+    } else {
+      console.log('ℹ️ Jobs de notificaciones deshabilitados (solo en producción)');
+    }
+    
     // Arrancar servidor
     app.listen(PORT, () => {
       console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
       console.log(`📚 Ambiente: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔐 JWT Secret configurado: ${process.env.JWT_SECRET ? 'Sí' : 'No (usando default)'}`);
+      console.log(`🔔 Push Notifications: ${process.env.VAPID_PUBLIC_KEY ? 'Configuradas' : 'No configuradas'}`);
       console.log('\n📍 Endpoints principales:');
       console.log(`   - API Info: GET http://localhost:${PORT}/`);
       console.log(`   - Health: GET http://localhost:${PORT}/health`);
       console.log(`   - Predicciones: GET http://localhost:${PORT}/api/predictions`);
       console.log(`   - Login: POST http://localhost:${PORT}/api/auth/login`);
       console.log(`   - Admin Stats: GET http://localhost:${PORT}/api/admin/stats`);
+      console.log(`   - Notifications: GET http://localhost:${PORT}/api/notifications/vapid-public-key`);
       console.log('\n💡 Usa Ctrl+C para detener el servidor');
     });
   } catch (error) {
@@ -228,6 +268,12 @@ const startServer = async () => {
 process.on('SIGINT', async () => {
   console.log('\n👋 Cerrando servidor...');
   try {
+    // Detener jobs si están activos
+    if (notificationJobs) {
+      notificationJobs.stop();
+      console.log('✅ Jobs de notificaciones detenidos');
+    }
+    
     await sequelize.close();
     console.log('✅ Conexión a base de datos cerrada');
     process.exit(0);
@@ -240,6 +286,9 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('\n👋 Cerrando servidor (SIGTERM)...');
   try {
+    if (notificationJobs) {
+      notificationJobs.stop();
+    }
     await sequelize.close();
     process.exit(0);
   } catch (error) {

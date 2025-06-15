@@ -1,3 +1,4 @@
+// src/routes/admin.routes.js (ACTUALIZADO)
 const router = require('express').Router();
 const adminController = require('../controllers/admin.controller');
 const requireAuth = require('../middleware/requireAuth.middleware');
@@ -25,5 +26,9 @@ router.put('/users/:id/premium', adminController.togglePremium);
 
 // Pagos
 router.get('/payments', adminController.getPayments);
+
+// NOTIFICACIONES (AGREGAR ESTAS LÍNEAS)
+router.get('/notifications/stats', adminController.getNotificationStats);
+router.post('/notifications/custom', adminController.sendCustomNotification);
 
 module.exports = router;
