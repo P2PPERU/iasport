@@ -1,3 +1,4 @@
+// src/models/User.js
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const bcrypt = require('bcrypt');
@@ -62,6 +63,16 @@ const User = sequelize.define('User', {
   lastLogin: {
     type: DataTypes.DATE,
     field: 'last_login'
+  },
+  freeViewsLeft: {
+    type: DataTypes.INTEGER,
+    defaultValue: 2,
+    field: 'free_views_left'
+  },
+  lastFreeViewReset: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+    field: 'last_free_view_reset'
   },
   preferences: {
     type: DataTypes.JSONB,
