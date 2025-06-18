@@ -1,4 +1,4 @@
-// src/models/index.js - ACTUALIZADO CON TORNEOS
+// src/models/index.js - ACTUALIZADO CON WALLET
 const sequelize = require('../config/database');
 
 // Modelos existentes
@@ -9,12 +9,18 @@ const UnlockedPrediction = require('./UnlockedPrediction');
 const PushSubscription = require('./PushSubscription');
 const NotificationHistory = require('./NotificationHistory');
 
-// Nuevos modelos para PredictMaster
+// Modelos de PredictMaster
 const Tournament = require('./Tournament');
 const TournamentEntry = require('./TournamentEntry');
 const TournamentPrediction = require('./TournamentPrediction');
 const League = require('./League');
 const UserStats = require('./UserStats');
+
+// NUEVOS MODELOS DE WALLET
+const Wallet = require('./Wallet');
+const WalletTransaction = require('./WalletTransaction');
+const DepositRequest = require('./DepositRequest');
+const WithdrawalRequest = require('./WithdrawalRequest');
 
 // =====================================================
 // ASOCIACIONES EXISTENTES
@@ -35,37 +41,29 @@ User.hasMany(NotificationHistory, { foreignKey: 'user_id' });
 NotificationHistory.belongsTo(User, { foreignKey: 'user_id' });
 
 // =====================================================
-// NUEVAS ASOCIACIONES PARA TORNEOS
+// ASOCIACIONES DE TORNEOS
 // =====================================================
-
-// User ↔ Tournament (many-to-many a través de TournamentEntry)
 User.hasMany(TournamentEntry, { foreignKey: 'user_id', as: 'tournamentEntries' });
 TournamentEntry.belongsTo(User, { foreignKey: 'user_id' });
 
 Tournament.hasMany(TournamentEntry, { foreignKey: 'tournament_id', as: 'entries' });
 TournamentEntry.belongsTo(Tournament, { foreignKey: 'tournament_id' });
 
-// TournamentEntry ↔ Payment
 TournamentEntry.belongsTo(Payment, { foreignKey: 'payment_id' });
 Payment.hasOne(TournamentEntry, { foreignKey: 'payment_id' });
 
-// TournamentEntry ↔ TournamentPrediction
 TournamentEntry.hasMany(TournamentPrediction, { foreignKey: 'entry_id', as: 'predictions' });
 TournamentPrediction.belongsTo(TournamentEntry, { foreignKey: 'entry_id' });
 
-// Tournament ↔ TournamentPrediction
 Tournament.hasMany(TournamentPrediction, { foreignKey: 'tournament_id', as: 'predictions' });
 TournamentPrediction.belongsTo(Tournament, { foreignKey: 'tournament_id' });
 
-// User ↔ TournamentPrediction
 User.hasMany(TournamentPrediction, { foreignKey: 'user_id', as: 'tournamentPredictions' });
 TournamentPrediction.belongsTo(User, { foreignKey: 'user_id' });
 
-// Prediction ↔ TournamentPrediction (predicción base opcional)
 Prediction.hasMany(TournamentPrediction, { foreignKey: 'base_prediction_id', as: 'tournamentUses' });
 TournamentPrediction.belongsTo(Prediction, { foreignKey: 'base_prediction_id', as: 'basePrediction' });
 
-// User ↔ League (a través de UserStats)
 League.hasMany(UserStats, { foreignKey: 'league_id' });
 UserStats.belongsTo(League, { foreignKey: 'league_id' });
 
@@ -73,78 +71,87 @@ User.hasOne(UserStats, { foreignKey: 'user_id', as: 'stats' });
 UserStats.belongsTo(User, { foreignKey: 'user_id' });
 
 // =====================================================
-// MÉTODOS HELPER PARA CONSULTAS COMPLEJAS
+// NUEVAS ASOCIACIONES DE WALLET
 // =====================================================
 
-// Obtener ranking de torneo
-Tournament.prototype.getLeaderboard = async function(limit = 50) {
-  return await TournamentEntry.findAll({
-    where: { tournamentId: this.id },
-    include: [{
-      model: User,
-      attributes: ['id', 'name', 'email']
-    }],
-    order: [
-      ['total_score', 'DESC'],
-      ['roi', 'DESC'],
-      ['correct_predictions', 'DESC']
-    ],
-    limit
-  });
-};
+// User ↔ Wallet (1:1)
+User.hasOne(Wallet, { foreignKey: 'user_id', as: 'wallet' });
+Wallet.belongsTo(User, { foreignKey: 'user_id' });
 
-// Obtener estadísticas de usuario en un torneo
-User.prototype.getTournamentStats = async function(tournamentId) {
-  const entry = await TournamentEntry.findOne({
-    where: { userId: this.id, tournamentId },
-    include: [{
-      model: TournamentPrediction,
-      as: 'predictions'
-    }]
-  });
-  
-  return entry;
-};
+// Wallet ↔ WalletTransaction (1:N)
+Wallet.hasMany(WalletTransaction, { foreignKey: 'wallet_id', as: 'transactions' });
+WalletTransaction.belongsTo(Wallet, { foreignKey: 'wallet_id' });
 
-// Obtener ranking global
-User.getGlobalRanking = async function(period = 'all', limit = 100) {
-  const whereClause = {};
+// User ↔ DepositRequest (1:N)
+User.hasMany(DepositRequest, { foreignKey: 'user_id', as: 'depositRequests' });
+DepositRequest.belongsTo(User, { foreignKey: 'user_id' });
+
+// Wallet ↔ DepositRequest (1:N)
+Wallet.hasMany(DepositRequest, { foreignKey: 'wallet_id', as: 'depositRequests' });
+DepositRequest.belongsTo(Wallet, { foreignKey: 'wallet_id' });
+
+// DepositRequest ↔ WalletTransaction (1:1 opcional)
+DepositRequest.belongsTo(WalletTransaction, { foreignKey: 'wallet_transaction_id', as: 'transaction' });
+WalletTransaction.hasOne(DepositRequest, { foreignKey: 'wallet_transaction_id' });
+
+// User ↔ WithdrawalRequest (1:N)
+User.hasMany(WithdrawalRequest, { foreignKey: 'user_id', as: 'withdrawalRequests' });
+WithdrawalRequest.belongsTo(User, { foreignKey: 'user_id' });
+
+// Wallet ↔ WithdrawalRequest (1:N)
+Wallet.hasMany(WithdrawalRequest, { foreignKey: 'wallet_id', as: 'withdrawalRequests' });
+WithdrawalRequest.belongsTo(Wallet, { foreignKey: 'wallet_id' });
+
+// WithdrawalRequest ↔ WalletTransaction (1:1)
+WithdrawalRequest.belongsTo(WalletTransaction, { foreignKey: 'wallet_transaction_id', as: 'transaction' });
+WalletTransaction.hasOne(WithdrawalRequest, { foreignKey: 'wallet_transaction_id' });
+
+// Admin relationships for processing
+DepositRequest.belongsTo(User, { foreignKey: 'processed_by', as: 'processor' });
+WithdrawalRequest.belongsTo(User, { foreignKey: 'processed_by', as: 'processor' });
+WalletTransaction.belongsTo(User, { foreignKey: 'created_by', as: 'creator' });
+
+// =====================================================
+// ACTUALIZAR ASOCIACIÓN DE TOURNAMENT ENTRY
+// =====================================================
+// Agregar nueva asociación con WalletTransaction
+TournamentEntry.belongsTo(WalletTransaction, { foreignKey: 'wallet_transaction_id', as: 'walletTransaction' });
+WalletTransaction.hasOne(TournamentEntry, { foreignKey: 'wallet_transaction_id' });
+
+// =====================================================
+// MÉTODOS HELPER PARA WALLET
+// =====================================================
+
+// Obtener wallet del usuario (crear si no existe)
+User.prototype.getOrCreateWallet = async function(transaction = null) {
+  let wallet = await this.getWallet({ transaction });
   
-  if (period === 'monthly') {
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-    whereClause.created_at = { [sequelize.Sequelize.Op.gte]: startOfMonth };
-  } else if (period === 'weekly') {
-    const startOfWeek = new Date();
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    whereClause.created_at = { [sequelize.Sequelize.Op.gte]: startOfWeek };
+  if (!wallet) {
+    wallet = await Wallet.create({
+      userId: this.id,
+      status: 'ACTIVE',
+      currency: 'PEN'
+    }, { transaction });
   }
-
-  return await User.findAll({
-    include: [{
-      model: UserStats,
-      as: 'stats',
-      include: [{
-        model: League
-      }]
-    }, {
-      model: TournamentEntry,
-      as: 'tournamentEntries',
-      where: whereClause,
-      required: false
-    }],
-    order: [
-      [{ model: UserStats, as: 'stats' }, 'roi', 'DESC'],
-      [{ model: UserStats, as: 'stats' }, 'success_rate', 'DESC'],
-      [{ model: UserStats, as: 'stats' }, 'total_earnings', 'DESC']
-    ],
-    limit
-  });
+  
+  return wallet;
 };
 
-// Sincronizar modelos con BD
+// Verificar si el usuario puede pagar un monto
+User.prototype.canAfford = async function(amount) {
+  const wallet = await this.getWallet();
+  return wallet && wallet.canDebit(amount);
+};
+
+// Obtener balance disponible
+User.prototype.getAvailableBalance = async function() {
+  const wallet = await this.getWallet();
+  return wallet ? wallet.getAvailableBalance() : 0;
+};
+
+// =====================================================
+// SINCRONIZAR BASE DE DATOS
+// =====================================================
 const syncDatabase = async () => {
   try {
     await sequelize.sync({ alter: false });
@@ -226,12 +233,17 @@ module.exports = {
   UnlockedPrediction,
   PushSubscription,
   NotificationHistory,
-  // Nuevos modelos
+  // Modelos de torneos
   Tournament,
   TournamentEntry,
   TournamentPrediction,
   League,
   UserStats,
+  // NUEVOS MODELOS DE WALLET
+  Wallet,
+  WalletTransaction,
+  DepositRequest,
+  WithdrawalRequest,
   // Funciones utilitarias
   syncDatabase,
   createDefaultLeagues
