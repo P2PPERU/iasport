@@ -120,7 +120,8 @@ app.get('/health', async (req, res) => {
         authentication: true,
         pushNotifications: true,
         tournaments: true,
-        payments: false
+        wallet: true,
+        payments: true
       }
     });
   } catch (error) {
@@ -156,6 +157,12 @@ app.get('/', (req, res) => {
         join: 'POST /api/tournaments/:id/join',
         ranking: 'GET /api/tournaments/ranking/global'
       },
+      wallet: {
+        balance: 'GET /api/wallet/balance',
+        dashboard: 'GET /api/wallet/dashboard',
+        deposits: 'POST /api/wallet/deposits',
+        withdrawals: 'POST /api/wallet/withdrawals'
+      },
       users: {
         profile: 'GET /api/users/profile',
         preferences: 'PUT /api/users/preferences'
@@ -163,7 +170,8 @@ app.get('/', (req, res) => {
       admin: {
         stats: 'GET /api/admin/stats',
         predictions: 'GET /api/admin/predictions',
-        tournaments: 'GET /api/admin/tournaments/stats'
+        tournaments: 'GET /api/admin/tournaments/stats',
+        wallet: 'GET /api/wallet/admin/deposits'
       },
       notifications: {
         vapidKey: 'GET /api/notifications/vapid-public-key',
@@ -180,6 +188,7 @@ app.use('/api/tournaments', require('./src/routes/tournaments.routes'));
 app.use('/api/users', require('./src/routes/users.routes'));
 app.use('/api/admin', require('./src/routes/admin.routes'));
 app.use('/api/notifications', require('./src/routes/notifications.routes'));
+app.use('/api/wallet', require('./src/routes/wallet.routes')); // NUEVA RUTA DE WALLET
 
 // Manejo de rutas no encontradas
 app.use((req, res, next) => {
@@ -275,6 +284,7 @@ const startServer = async () => {
       console.log(`   - Health: GET http://localhost:${PORT}/health`);
       console.log(`   - Predicciones: GET http://localhost:${PORT}/api/predictions`);
       console.log(`   - Torneos: GET http://localhost:${PORT}/api/tournaments`);
+      console.log(`   - Wallet: GET http://localhost:${PORT}/api/wallet/balance`);
       console.log(`   - Login: POST http://localhost:${PORT}/api/auth/login`);
       console.log('\n💡 Usa Ctrl+C para detener el servidor');
     });
