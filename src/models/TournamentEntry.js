@@ -1,4 +1,4 @@
-// src/models/TournamentEntry.js
+// src/models/TournamentEntry.js - ACTUALIZADO CON WALLET INTEGRATION
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
@@ -34,13 +34,26 @@ const TournamentEntry = sequelize.define('TournamentEntry', {
   buyInPaid: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: false,
-    field: 'buy_in_paid'
+    field: 'buy_in_paid',
+    get() {
+      const value = this.getDataValue('buyInPaid');
+      return value ? parseFloat(value) : 0;
+    }
   },
   paymentId: {
     type: DataTypes.UUID,
     field: 'payment_id',
     references: {
       model: 'payments',
+      key: 'id'
+    }
+  },
+  // NUEVA RELACIÓN CON WALLET TRANSACTION
+  walletTransactionId: {
+    type: DataTypes.UUID,
+    field: 'wallet_transaction_id',
+    references: {
+      model: 'wallet_transactions',
       key: 'id'
     }
   },
@@ -55,7 +68,11 @@ const TournamentEntry = sequelize.define('TournamentEntry', {
   totalScore: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0.00,
-    field: 'total_score'
+    field: 'total_score',
+    get() {
+      const value = this.getDataValue('totalScore');
+      return value ? parseFloat(value) : 0;
+    }
   },
   predictionsSubmitted: {
     type: DataTypes.INTEGER,
@@ -69,7 +86,11 @@ const TournamentEntry = sequelize.define('TournamentEntry', {
   },
   roi: {
     type: DataTypes.DECIMAL(8, 4),
-    defaultValue: 0.0000
+    defaultValue: 0.0000,
+    get() {
+      const value = this.getDataValue('roi');
+      return value ? parseFloat(value) : 0;
+    }
   },
   streakCount: {
     type: DataTypes.INTEGER,
@@ -79,15 +100,23 @@ const TournamentEntry = sequelize.define('TournamentEntry', {
   bonusPoints: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0.00,
-    field: 'bonus_points'
+    field: 'bonus_points',
+    get() {
+      const value = this.getDataValue('bonusPoints');
+      return value ? parseFloat(value) : 0;
+    }
   },
   prizeWon: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0.00,
-    field: 'prize_won'
+    field: 'prize_won',
+    get() {
+      const value = this.getDataValue('prizeWon');
+      return value ? parseFloat(value) : 0;
+    }
   },
   status: {
-    type: DataTypes.ENUM('ACTIVE', 'ELIMINATED', 'FINISHED'),
+    type: DataTypes.ENUM('ACTIVE', 'ELIMINATED', 'FINISHED', 'REFUNDED'),
     defaultValue: 'ACTIVE'
   },
   eliminatedAt: {
@@ -120,8 +149,31 @@ const TournamentEntry = sequelize.define('TournamentEntry', {
     },
     {
       fields: ['tournament_id', 'current_rank']
+    },
+    {
+      fields: ['wallet_transaction_id']
     }
   ]
 });
+
+// Métodos de instancia
+TournamentEntry.prototype.calculateROI = function() {
+  if (this.buyInPaid === 0) return 0;
+  const profit = this.prizeWon - this.buyInPaid;
+  return (profit / this.buyInPaid) * 100;
+};
+
+TournamentEntry.prototype.getAccuracyRate = function() {
+  if (this.predictionsSubmitted === 0) return 0;
+  return (this.correctPredictions / this.predictionsSubmitted) * 100;
+};
+
+TournamentEntry.prototype.isInTheMoney = function() {
+  return this.prizeWon > 0;
+};
+
+TournamentEntry.prototype.getNetProfit = function() {
+  return this.prizeWon - this.buyInPaid;
+};
 
 module.exports = TournamentEntry;

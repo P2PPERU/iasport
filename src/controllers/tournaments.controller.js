@@ -1,7 +1,8 @@
-// src/controllers/tournaments.controller.js
-const { Tournament, TournamentEntry, TournamentPrediction, User, League, UserStats, Payment } = require('../models');
+// src/controllers/tournaments.controller.js - ACTUALIZADO CON WALLET INTEGRATION
+const { Tournament, TournamentEntry, TournamentPrediction, User, League, UserStats, Wallet, WalletTransaction } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
+const WalletService = require('../services/wallet.service');
 
 // =====================================================
 // OBTENER TORNEOS ACTIVOS/DISPONIBLES
@@ -40,13 +41,18 @@ exports.getActiveTournaments = async (req, res) => {
       ]
     });
 
-    // Si hay usuario autenticado, verificar si ya está inscrito
+    // Si hay usuario autenticado, verificar si ya está inscrito y su saldo
     let userEntries = [];
+    let userBalance = 0;
+    
     if (req.user) {
       userEntries = await TournamentEntry.findAll({
         where: { userId: req.user.id },
         attributes: ['tournamentId']
       });
+      
+      // Obtener saldo del usuario
+      userBalance = await WalletService.getAvailableBalance(req.user.id);
     }
 
     const userTournamentIds = userEntries.map(entry => entry.tournamentId);
@@ -58,13 +64,19 @@ exports.getActiveTournaments = async (req, res) => {
                         data.currentPlayers < data.maxPlayers &&
                         !data.isUserEntered &&
                         new Date() < new Date(data.registrationDeadline);
+      
+      // Verificar si el usuario puede pagar
+      data.canAfford = data.buyIn === 0 || userBalance >= data.buyIn;
+      data.userBalance = userBalance;
+      
       return data;
     });
 
     res.json({
       success: true,
       data: formattedTournaments,
-      count: formattedTournaments.length
+      count: formattedTournaments.length,
+      userBalance
     });
 
   } catch (error) {
@@ -103,8 +115,10 @@ exports.getTournament = async (req, res) => {
       });
     }
 
-    // Verificar si el usuario está inscrito
+    // Verificar si el usuario está inscrito y su saldo
     let userEntry = null;
+    let userBalance = 0;
+    
     if (req.user) {
       userEntry = await TournamentEntry.findOne({
         where: { userId: req.user.id, tournamentId: id },
@@ -114,10 +128,14 @@ exports.getTournament = async (req, res) => {
           order: [['sequence_number', 'ASC']]
         }]
       });
+      
+      userBalance = await WalletService.getAvailableBalance(req.user.id);
     }
 
     const data = tournament.toJSON();
     data.userEntry = userEntry;
+    data.userBalance = userBalance;
+    data.canAfford = data.buyIn === 0 || userBalance >= data.buyIn;
     data.leaderboard = data.entries.map((entry, index) => ({
       ...entry,
       currentRank: index + 1
@@ -138,7 +156,7 @@ exports.getTournament = async (req, res) => {
 };
 
 // =====================================================
-// INSCRIBIRSE A UN TORNEO
+// INSCRIBIRSE A UN TORNEO - INTEGRADO CON WALLET
 // =====================================================
 exports.joinTournament = async (req, res) => {
   try {
@@ -206,33 +224,61 @@ exports.joinTournament = async (req, res) => {
       return res.json({
         success: true,
         message: 'Inscripción exitosa al freeroll',
-        data: entry
+        data: {
+          entry,
+          tournament: {
+            id: tournament.id,
+            name: tournament.name,
+            currentPlayers: tournament.currentPlayers + 1
+          }
+        }
       });
     }
 
-    // Para torneos pagados, crear orden de pago
-    const payment = await Payment.create({
+    // Para torneos pagados, usar WalletService
+    const paymentResult = await WalletService.payTournamentEntry(
+      userId, 
+      id, 
+      tournament.buyIn
+    );
+
+    if (!paymentResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: paymentResult.error || 'No tienes saldo suficiente',
+        data: {
+          required: tournament.buyIn,
+          available: paymentResult.available || 0
+        }
+      });
+    }
+
+    // Crear entrada del torneo
+    const entry = await TournamentEntry.create({
       userId,
-      amount: tournament.buyIn,
-      currency: tournament.currency,
-      method: 'PENDING', // Se definirá en el siguiente paso
-      status: 'PENDING',
-      reference: `TOURNAMENT_${tournament.id}_${Date.now()}`,
-      metadata: {
-        tournamentId: id,
-        tournamentName: tournament.name,
-        type: 'tournament_entry'
-      }
+      tournamentId: id,
+      buyInPaid: tournament.buyIn,
+      walletTransactionId: paymentResult.transaction.id
     });
+
+    // Actualizar contador de jugadores y prize pool
+    const prizePoolIncrease = tournament.buyIn * 0.9; // 90% al prize pool, 10% comisión
+    await tournament.increment('currentPlayers');
+    await tournament.increment('prizePool', { by: prizePoolIncrease });
 
     res.json({
       success: true,
-      message: 'Orden de pago creada',
+      message: 'Inscripción exitosa',
       data: {
-        paymentId: payment.id,
-        amount: tournament.buyIn,
-        currency: tournament.currency,
-        tournamentName: tournament.name
+        entry,
+        transaction: paymentResult.transaction,
+        newBalance: paymentResult.newBalance,
+        tournament: {
+          id: tournament.id,
+          name: tournament.name,
+          currentPlayers: tournament.currentPlayers + 1,
+          prizePool: tournament.prizePool + prizePoolIncrease
+        }
       }
     });
 
@@ -240,68 +286,8 @@ exports.joinTournament = async (req, res) => {
     console.error('Error al inscribirse:', error);
     res.status(500).json({
       success: false,
-      message: 'Error al procesar inscripción'
-    });
-  }
-};
-
-// =====================================================
-// CONFIRMAR INSCRIPCIÓN (DESPUÉS DEL PAGO)
-// =====================================================
-exports.confirmEntry = async (req, res) => {
-  try {
-    const { paymentId } = req.body;
-    const userId = req.user.id;
-
-    const payment = await Payment.findOne({
-      where: { id: paymentId, userId, status: 'COMPLETED' }
-    });
-
-    if (!payment) {
-      return res.status(400).json({
-        success: false,
-        message: 'Pago no encontrado o no completado'
-      });
-    }
-
-    const tournamentId = payment.metadata.tournamentId;
-
-    // Verificar que no existe ya una entrada
-    const existingEntry = await TournamentEntry.findOne({
-      where: { userId, tournamentId }
-    });
-
-    if (existingEntry) {
-      return res.status(400).json({
-        success: false,
-        message: 'Ya estás inscrito en este torneo'
-      });
-    }
-
-    // Crear entrada del torneo
-    const entry = await TournamentEntry.create({
-      userId,
-      tournamentId,
-      buyInPaid: payment.amount,
-      paymentId: payment.id
-    });
-
-    // Actualizar prize pool y jugadores
-    const tournament = await Tournament.findByPk(tournamentId);
-    await tournament.increment('currentPlayers');
-    await tournament.increment('prizePool', { by: payment.amount * 0.9 }); // 90% al prize pool, 10% comisión
-
-    res.json({
-      success: true,
-      message: 'Inscripción confirmada exitosamente',
-      data: entry
-    });
-
-  } catch (error) {
-    console.error('Error confirmando entrada:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error al confirmar entrada'
+      message: 'Error al procesar inscripción',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -450,11 +436,15 @@ exports.getUserStats = async (req, res) => {
       }]
     });
 
+    // Obtener balance de wallet
+    const walletBalance = await WalletService.getAvailableBalance(userId);
+
     res.json({
       success: true,
       data: {
         ...userStats.toJSON(),
-        activeTournaments
+        activeTournaments,
+        walletBalance
       }
     });
 
@@ -483,6 +473,11 @@ exports.getUserTournaments = async (req, res) => {
       include: [{
         model: Tournament,
         attributes: ['id', 'name', 'type', 'prizePool', 'status', 'startTime', 'endTime']
+      }, {
+        model: WalletTransaction,
+        as: 'walletTransaction',
+        attributes: ['id', 'amount', 'status', 'createdAt'],
+        required: false
       }],
       order: [['created_at', 'DESC']],
       limit: parseInt(limit),
@@ -501,6 +496,87 @@ exports.getUserTournaments = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener historial'
+    });
+  }
+};
+
+// =====================================================
+// SALIR DE UN TORNEO (ANTES DE QUE EMPIECE)
+// =====================================================
+exports.leaveTournament = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const tournament = await Tournament.findByPk(id);
+    if (!tournament) {
+      return res.status(404).json({
+        success: false,
+        message: 'Torneo no encontrado'
+      });
+    }
+
+    // Solo permitir salir si el torneo no ha empezado
+    if (!['UPCOMING', 'REGISTRATION'].includes(tournament.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'No puedes salir de un torneo que ya comenzó'
+      });
+    }
+
+    const entry = await TournamentEntry.findOne({
+      where: { userId, tournamentId: id }
+    });
+
+    if (!entry) {
+      return res.status(404).json({
+        success: false,
+        message: 'No estás inscrito en este torneo'
+      });
+    }
+
+    // Si pagó buy-in, hacer reembolso
+    if (entry.buyInPaid > 0) {
+      const refundResult = await WalletService.refundTournamentEntry(
+        userId,
+        id,
+        entry.buyInPaid,
+        'Usuario salió del torneo antes del inicio'
+      );
+
+      if (!refundResult.success) {
+        return res.status(500).json({
+          success: false,
+          message: 'Error procesando reembolso'
+        });
+      }
+    }
+
+    // Eliminar entrada
+    await entry.destroy();
+
+    // Actualizar contadores del torneo
+    await tournament.decrement('currentPlayers');
+    if (entry.buyInPaid > 0) {
+      await tournament.decrement('prizePool', { by: entry.buyInPaid * 0.9 });
+    }
+
+    res.json({
+      success: true,
+      message: entry.buyInPaid > 0 ? 
+        'Has salido del torneo y se procesó tu reembolso' : 
+        'Has salido del torneo exitosamente',
+      data: {
+        refunded: entry.buyInPaid,
+        newBalance: refundResult?.newBalance
+      }
+    });
+
+  } catch (error) {
+    console.error('Error saliendo del torneo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al salir del torneo'
     });
   }
 };

@@ -1,16 +1,18 @@
-// src/jobs/tournamentJobs.js
+// src/jobs/tournamentJobs.js - ACTUALIZADO CON WALLET INTEGRATION
 const cron = require('node-cron');
 const { Tournament, TournamentEntry, TournamentPrediction, User, UserStats } = require('../models');
 const { Op } = require('sequelize');
 const ScoringService = require('../services/scoring.service');
 const NotificationService = require('../services/notification.service');
+const TournamentService = require('../services/tournament.service');
+const WalletService = require('../services/wallet.service');
 
 class TournamentJobs {
   static jobs = [];
 
   // Inicializar todos los jobs
   static init() {
-    console.log('🏆 Iniciando jobs de torneos...');
+    console.log('🏆 Iniciando jobs de torneos con integración de Wallet...');
 
     // Job 1: Actualizar estado de torneos (cada 5 minutos)
     this.scheduleStatusUpdates();
@@ -29,6 +31,9 @@ class TournamentJobs {
 
     // Job 6: Recalcular estadísticas de usuarios (diario)
     this.scheduleStatsRecalculation();
+
+    // Job 7: Verificar integridad de prize pools (cada 6 horas)
+    this.schedulePrizePoolVerification();
 
     console.log(`✅ ${this.jobs.length} jobs de torneos activos`);
   }
@@ -84,7 +89,7 @@ class TournamentJobs {
         });
 
         for (const tournament of activeToFinished) {
-          await this.finalizeTournament(tournament);
+          await TournamentService.finalizeTournament(tournament.id);
           updated++;
         }
 
@@ -149,7 +154,7 @@ class TournamentJobs {
         });
 
         for (const tournament of tournamentsToFinish) {
-          await this.finalizeTournament(tournament);
+          await TournamentService.finalizeTournament(tournament.id);
           console.log(`   ✅ Torneo finalizado: ${tournament.name}`);
         }
 
@@ -169,7 +174,7 @@ class TournamentJobs {
           if (tournament.predictions.length === 0) {
             const hoursSinceStart = (new Date() - new Date(tournament.startTime)) / (1000 * 60 * 60);
             if (hoursSinceStart >= 2) { // Al menos 2 horas después del inicio
-              await this.finalizeTournament(tournament);
+              await TournamentService.finalizeTournament(tournament.id);
               console.log(`   ✅ Torneo finalizado por predicciones completas: ${tournament.name}`);
             }
           }
@@ -316,68 +321,59 @@ class TournamentJobs {
   }
 
   // =====================================================
+  // JOB 7: VERIFICAR INTEGRIDAD DE PRIZE POOLS
+  // =====================================================
+  static schedulePrizePoolVerification() {
+    const job = cron.schedule('0 */6 * * *', async () => { // Cada 6 horas
+      console.log('🔍 Verificando integridad de prize pools...');
+      
+      try {
+        const activeTournaments = await Tournament.findAll({
+          where: { 
+            status: ['REGISTRATION', 'ACTIVE'],
+            buyIn: { [Op.gt]: 0 } // Solo torneos pagados
+          }
+        });
+
+        let issuesFound = 0;
+
+        for (const tournament of activeTournaments) {
+          const verification = await TournamentService.verifyPrizePoolIntegrity(tournament.id);
+          
+          if (!verification.isValid) {
+            issuesFound++;
+            console.log(`⚠️ Inconsistencia en torneo ${tournament.name}:`);
+            console.log(`   Esperado: S/ ${verification.expectedPrizePool}`);
+            console.log(`   Actual: S/ ${verification.actualPrizePool}`);
+            console.log(`   Diferencia: S/ ${verification.difference}`);
+            
+            // Corregir automáticamente si la diferencia es pequeña
+            if (verification.difference < 1.00) {
+              tournament.prizePool = verification.expectedPrizePool;
+              await tournament.save();
+              console.log(`   ✅ Corregido automáticamente`);
+            }
+          }
+        }
+
+        if (issuesFound === 0) {
+          console.log(`   ✅ Todos los prize pools están correctos (${activeTournaments.length} verificados)`);
+        } else {
+          console.log(`   ⚠️ ${issuesFound} inconsistencias encontradas`);
+        }
+
+      } catch (error) {
+        console.error('❌ Error verificando prize pools:', error);
+      }
+    });
+
+    job.start();
+    this.jobs.push(job);
+  }
+
+  // =====================================================
   // MÉTODOS HELPER
   // =====================================================
-
-  // Finalizar un torneo
-  static async finalizeTournament(tournament) {
-    try {
-      // Obtener todas las entradas del torneo ordenadas por puntuación
-      const entries = await TournamentEntry.findAll({
-        where: { tournamentId: tournament.id, status: 'ACTIVE' },
-        order: [
-          ['total_score', 'DESC'],
-          ['roi', 'DESC'],
-          ['correct_predictions', 'DESC'],
-          ['created_at', 'ASC'] // Desempate por tiempo de inscripción
-        ]
-      });
-
-      // Asignar rankings finales
-      for (let i = 0; i < entries.length; i++) {
-        entries[i].finalRank = i + 1;
-        entries[i].status = 'FINISHED';
-        await entries[i].save();
-      }
-
-      // Calcular y distribuir premios
-      await this.distributePrizes(tournament, entries);
-
-      // Cambiar estado del torneo
-      tournament.status = 'FINISHED';
-      await tournament.save();
-
-      // Notificar a los participantes sobre los resultados
-      await this.notifyTournamentResults(tournament, entries);
-
-      // Recalcular estadísticas de los participantes
-      for (const entry of entries) {
-        await UserStats.recalculate(entry.userId);
-      }
-
-    } catch (error) {
-      console.error('Error finalizando torneo:', error);
-      throw error;
-    }
-  }
-
-  // Distribuir premios según la estructura de payout
-  static async distributePrizes(tournament, entries) {
-    const prizePool = parseFloat(tournament.prizePool);
-    const payoutStructure = tournament.payoutStructure;
-
-    if (prizePool <= 0) return;
-
-    for (const [position, percentage] of Object.entries(payoutStructure)) {
-      const rank = parseInt(position);
-      if (rank <= entries.length) {
-        const entry = entries[rank - 1];
-        const prize = Math.round((prizePool * percentage / 100) * 100) / 100;
-        entry.prizeWon = prize;
-        await entry.save();
-      }
-    }
-  }
 
   // Notificar inicio de torneo
   static async notifyTournamentStarting(tournament, timeLeft) {
@@ -447,34 +443,6 @@ class TournamentJobs {
     }
   }
 
-  // Notificar resultados del torneo
-  static async notifyTournamentResults(tournament, entries) {
-    try {
-      // Notificar a los ganadores (top 3)
-      const winners = entries.slice(0, 3);
-
-      for (const winner of winners) {
-        const position = winner.finalRank === 1 ? '🥇' : 
-                        winner.finalRank === 2 ? '🥈' : '🥉';
-        
-        await NotificationService.sendToUser(
-          winner.userId,
-          'tournament_result',
-          {
-            title: `${position} ¡Felicitaciones!`,
-            body: `Terminaste #${winner.finalRank} en ${tournament.name}${winner.prizeWon > 0 ? ` - Ganaste S/ ${winner.prizeWon}` : ''}`,
-            tournamentId: tournament.id,
-            rank: winner.finalRank,
-            prize: winner.prizeWon
-          }
-        );
-      }
-
-    } catch (error) {
-      console.error('Error notificando resultados:', error);
-    }
-  }
-
   // Obtener estadísticas de los jobs
   static async getJobStats() {
     try {
@@ -491,6 +459,10 @@ class TournamentJobs {
         entries: {
           total: await TournamentEntry.count(),
           active: await TournamentEntry.count({ where: { status: 'ACTIVE' } })
+        },
+        wallet: {
+          totalBalance: await WalletService.getTotalSystemBalance(),
+          activeTournamentValue: await this.getActiveTournamentValue()
         }
       };
 
@@ -498,6 +470,23 @@ class TournamentJobs {
     } catch (error) {
       console.error('Error obteniendo estadísticas:', error);
       return null;
+    }
+  }
+
+  // Obtener valor total en torneos activos
+  static async getActiveTournamentValue() {
+    try {
+      const activeTournaments = await Tournament.findAll({
+        where: { status: ['REGISTRATION', 'ACTIVE'] },
+        attributes: ['prizePool']
+      });
+
+      return activeTournaments.reduce((total, tournament) => {
+        return total + parseFloat(tournament.prizePool || 0);
+      }, 0);
+    } catch (error) {
+      console.error('Error calculando valor de torneos activos:', error);
+      return 0;
     }
   }
 }
