@@ -1,4 +1,4 @@
-// createTestUsers.js - Crear usuarios para testing
+// createTestUsers.js - CORREGIDO
 const bcrypt = require('bcrypt');
 const { User, sequelize } = require('./src/models');
 
@@ -90,10 +90,27 @@ const createTestUsers = async () => {
       console.log('ℹ️  Wallet admin ya existe');
     }
 
-    // Wallet para usuario premium
+    // Wallet para usuario premium con balance inicial
     try {
-      await WalletService.createWallet(premiumUser.id);
-      console.log('✅ Wallet premium user creada');
+      const wallet = await WalletService.createWallet(premiumUser.id);
+      
+      // Agregar balance inicial de S/ 200 para tests
+      const t = await sequelize.transaction();
+      try {
+        await WalletService.creditWallet(
+          wallet.id,
+          200.00,
+          'ADMIN_ADJUSTMENT',
+          'Balance inicial para tests',
+          'INITIAL_BALANCE',
+          t
+        );
+        await t.commit();
+        console.log('✅ Wallet premium user creada con S/ 200');
+      } catch (error) {
+        await t.rollback();
+        console.log('✅ Wallet premium user creada');
+      }
     } catch (error) {
       console.log('ℹ️  Wallet premium user ya existe');
     }
@@ -108,7 +125,7 @@ const createTestUsers = async () => {
 
     console.log('\n🎉 USUARIOS DE PRUEBA LISTOS:');
     console.log('👑 Admin: admin@iasport.pe / admin123');
-    console.log('💎 Premium: premium@test.com / test123');
+    console.log('💎 Premium: premium@test.com / test123 (Balance: S/ 200)');
     console.log('👤 Regular: regular@test.com / test123');
 
     console.log('\n✅ Setup completado exitosamente!');

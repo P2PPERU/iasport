@@ -1,4 +1,4 @@
-// src/services/wallet.service.js
+// src/services/wallet.service.js - CORREGIDO
 const { 
   Wallet, 
   WalletTransaction, 
@@ -225,7 +225,11 @@ class WalletService {
     } catch (error) {
       await t.rollback();
       console.error('Error en payTournamentEntry:', error);
-      throw error;
+      return {
+        success: false,
+        error: error.message,
+        available: await this.getAvailableBalance(userId)
+      };
     }
   }
   
@@ -351,7 +355,9 @@ class WalletService {
       });
       
       if (!user.wallet) {
-        throw new WalletNotFoundError(userId);
+        // Crear wallet si no existe
+        const wallet = await this.createWallet(userId);
+        user.wallet = wallet;
       }
       
       // Obtener torneos activos
@@ -390,7 +396,8 @@ class WalletService {
           [sequelize.fn('SUM', sequelize.col('amount')), 'total'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'count']
         ],
-        group: ['type', 'category']
+        group: ['type', 'category'],
+        raw: true
       });
       
       return {
@@ -469,11 +476,7 @@ class WalletService {
       // Obtener solicitud con lock
       const depositRequest = await DepositRequest.findByPk(depositRequestId, {
         lock: t.LOCK.UPDATE,
-        transaction: t,
-        include: [{
-          model: Wallet,
-          as: 'Wallet'
-        }]
+        transaction: t
       });
       
       if (!depositRequest) {
@@ -846,114 +849,6 @@ class WalletService {
     } catch (error) {
       await t.rollback();
       console.error('Error en manualAdjustment:', error);
-      throw error;
-    }
-  }
-  
-  // =====================================================
-  // REVERTIR TRANSACCIÓN
-  // =====================================================
-  
-  static async reverseTransaction(originalTransactionId, reason, adminId) {
-    const t = await sequelize.transaction();
-    
-    try {
-      // Buscar transacción original
-      const originalTxn = await WalletTransaction.findByPk(originalTransactionId, {
-        include: [{
-          model: Wallet
-        }],
-        transaction: t
-      });
-      
-      if (!originalTxn) {
-        throw new Error('Transacción no encontrada');
-      }
-      
-      if (!originalTxn.canReverse()) {
-        throw new TransactionNotReversibleError(
-          originalTransactionId,
-          'Solo se pueden revertir transacciones completadas de tipo crédito'
-        );
-      }
-      
-      // Verificar que no haya sido revertida ya
-      if (originalTxn.status === 'REVERSED') {
-        throw new TransactionNotReversibleError(
-          originalTransactionId,
-          'La transacción ya fue revertida'
-        );
-      }
-      
-      const wallet = await Wallet.findByPk(originalTxn.walletId, {
-        lock: t.LOCK.UPDATE,
-        transaction: t
-      });
-      
-      // Para revertir un crédito, hacemos un débito
-      const reversalType = originalTxn.type === 'CREDIT' ? 'DEBIT' : 'CREDIT';
-      const amount = originalTxn.amount;
-      
-      if (reversalType === 'DEBIT' && !wallet.canDebit(amount)) {
-        throw new InsufficientBalanceError(wallet.balance, amount);
-      }
-      
-      let reversalTxn;
-      
-      if (reversalType === 'DEBIT') {
-        reversalTxn = await this.debitWallet(
-          wallet.id,
-          amount,
-          originalTxn.category,
-          `Reversión: ${originalTxn.description}`,
-          `REV_${originalTxn.id}`,
-          t
-        );
-      } else {
-        reversalTxn = await this.creditWallet(
-          wallet.id,
-          amount,
-          originalTxn.category,
-          `Reversión: ${originalTxn.description}`,
-          `REV_${originalTxn.id}`,
-          t
-        );
-      }
-      
-      // Marcar original como revertida
-      await originalTxn.update({
-        status: 'REVERSED',
-        metadata: {
-          ...originalTxn.metadata,
-          reversedAt: new Date(),
-          reversedBy: adminId,
-          reversalReason: reason,
-          reversalTransactionId: reversalTxn.id
-        }
-      }, { transaction: t });
-      
-      // Actualizar metadata de la reversión
-      await reversalTxn.update({
-        createdBy: adminId,
-        metadata: {
-          ...reversalTxn.metadata,
-          originalTransactionId,
-          reversalReason: reason
-        }
-      }, { transaction: t });
-      
-      await t.commit();
-      
-      console.log(`🔄 Transacción revertida: ${originalTransactionId}`);
-      
-      return {
-        originalTransaction: originalTxn,
-        reversalTransaction: reversalTxn
-      };
-      
-    } catch (error) {
-      await t.rollback();
-      console.error('Error en reverseTransaction:', error);
       throw error;
     }
   }
