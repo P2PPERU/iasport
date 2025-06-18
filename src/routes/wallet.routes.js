@@ -3,6 +3,7 @@ const router = require('express').Router();
 const walletController = require('../controllers/wallet.controller');
 const requireAuth = require('../middleware/requireAuth.middleware');
 const requireAdmin = require('../middleware/requireAdmin.middleware');
+const walletMiddleware = require('../middleware/wallet.middleware');
 
 // =====================================================
 // RUTAS QUE REQUIEREN AUTENTICACIÓN
@@ -17,11 +18,21 @@ router.get('/dashboard', walletController.getDashboard);
 router.get('/transactions', walletController.getTransactionHistory);
 
 // Depósitos
-router.post('/deposits', walletController.createDeposit);
+router.post('/deposits', 
+  walletMiddleware.validateCreateDeposit,
+  walletMiddleware.checkPendingRequests('deposit'),
+  walletController.createDeposit
+);
 router.get('/deposits', walletController.getUserDeposits);
 
 // Retiros
-router.post('/withdrawals', walletController.createWithdrawal);
+router.post('/withdrawals', 
+  walletMiddleware.validateCreateWithdrawal,
+  walletMiddleware.checkSufficientBalance,
+  walletMiddleware.checkDailyWithdrawalLimit,
+  walletMiddleware.checkPendingRequests('withdrawal'),
+  walletController.createWithdrawal
+);
 router.get('/withdrawals', walletController.getUserWithdrawals);
 router.put('/withdrawals/:id/cancel', walletController.cancelWithdrawal);
 
@@ -36,15 +47,24 @@ router.use(requireAdmin);
 
 // Gestión de depósitos
 router.get('/admin/deposits', walletController.getAllDeposits);
-router.put('/admin/deposits/:id/approve', walletController.approveDeposit);
+router.put('/admin/deposits/:id/approve', 
+  walletMiddleware.validateApproveDeposit,
+  walletController.approveDeposit
+);
 router.put('/admin/deposits/:id/reject', walletController.rejectDeposit);
 
 // Gestión de retiros
 router.get('/admin/withdrawals', walletController.getAllWithdrawals);
-router.put('/admin/withdrawals/:id/process', walletController.processWithdrawal);
+router.put('/admin/withdrawals/:id/process', 
+  walletMiddleware.validateProcessWithdrawal,
+  walletController.processWithdrawal
+);
 router.put('/admin/withdrawals/:id/complete', walletController.completeWithdrawal);
 
 // Ajustes manuales
-router.post('/admin/adjustment', walletController.manualAdjustment);
+router.post('/admin/adjustment', 
+  walletMiddleware.validateManualAdjustment,
+  walletController.manualAdjustment
+);
 
 module.exports = router;
