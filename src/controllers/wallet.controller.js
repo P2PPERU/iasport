@@ -108,7 +108,7 @@ exports.getTransactionHistory = async (req, res) => {
 // =====================================================
 // CREAR SOLICITUD DE DEPÓSITO
 // =====================================================
-exports.createDeposit = async (req, res) => {
+exports.createDepositRequest = async (req, res) => {
   try {
     const userId = req.user.id;
     const { amount, method, transactionNumber, proofImageUrl } = req.body;
@@ -160,7 +160,7 @@ exports.createDeposit = async (req, res) => {
 // =====================================================
 // CREAR SOLICITUD DE RETIRO
 // =====================================================
-exports.createWithdrawal = async (req, res) => {
+exports.createWithdrawalRequest = async (req, res) => {
   try {
     const userId = req.user.id;
     const { amount, method, accountNumber, accountName } = req.body;
@@ -214,7 +214,7 @@ exports.createWithdrawal = async (req, res) => {
 // =====================================================
 // OBTENER SOLICITUDES DE DEPÓSITO DEL USUARIO
 // =====================================================
-exports.getUserDeposits = async (req, res) => {
+exports.getUserDepositRequests = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 10, offset = 0, status } = req.query;
@@ -247,7 +247,7 @@ exports.getUserDeposits = async (req, res) => {
 // =====================================================
 // OBTENER SOLICITUDES DE RETIRO DEL USUARIO
 // =====================================================
-exports.getUserWithdrawals = async (req, res) => {
+exports.getUserWithdrawalRequests = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 10, offset = 0, status } = req.query;
@@ -474,6 +474,48 @@ exports.getWalletStats = async (req, res) => {
 };
 
 // =====================================================
+// ADMIN: DASHBOARD DE WALLET
+// =====================================================
+exports.getAdminDashboard = async (req, res) => {
+  try {
+    const stats = {
+      totalWallets: await Wallet.count(),
+      activeWallets: await Wallet.count({ where: { status: 'ACTIVE' } }),
+      totalBalance: await Wallet.sum('balance') || 0,
+      pendingDeposits: await DepositRequest.count({ where: { status: 'PENDING' } }),
+      pendingWithdrawals: await WithdrawalRequest.count({ where: { status: 'PENDING' } }),
+      processingWithdrawals: await WithdrawalRequest.count({ where: { status: 'PROCESSING' } })
+    };
+
+    // Transacciones del día
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const todayTransactions = await WalletTransaction.count({
+      where: {
+        createdAt: { [Op.between]: [today, tomorrow] },
+        status: 'COMPLETED'
+      }
+    });
+
+    stats.todayTransactions = todayTransactions;
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error obteniendo dashboard admin:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener dashboard administrativo'
+    });
+  }
+};
+
+// =====================================================
 // ADMIN: APROBAR DEPÓSITO
 // =====================================================
 exports.approveDeposit = async (req, res) => {
@@ -586,6 +628,30 @@ exports.completeWithdrawal = async (req, res) => {
 };
 
 // =====================================================
+// ADMIN: RECHAZAR RETIRO
+// =====================================================
+exports.rejectWithdrawal = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    
+    const result = await WalletService.cancelWithdrawal(id, reason);
+    
+    res.json({
+      success: true,
+      message: 'Retiro rechazado y fondos devueltos',
+      data: result
+    });
+  } catch (error) {
+    console.error('Error rechazando retiro:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Error al rechazar retiro'
+    });
+  }
+};
+
+// =====================================================
 // ADMIN: AJUSTE MANUAL
 // =====================================================
 exports.manualAdjustment = async (req, res) => {
@@ -625,7 +691,7 @@ exports.manualAdjustment = async (req, res) => {
 // =====================================================
 // ADMIN: OBTENER TODAS LAS SOLICITUDES DE DEPÓSITO
 // =====================================================
-exports.getAllDeposits = async (req, res) => {
+exports.getAllDepositRequests = async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
     
@@ -661,7 +727,7 @@ exports.getAllDeposits = async (req, res) => {
 // =====================================================
 // ADMIN: OBTENER TODAS LAS SOLICITUDES DE RETIRO
 // =====================================================
-exports.getAllWithdrawals = async (req, res) => {
+exports.getAllWithdrawalRequests = async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
     
