@@ -1,89 +1,78 @@
-// fixDatabase.js - Arreglar columnas faltantes
+// fix-db.js - Solucionar problema de ENUM en PostgreSQL
 require('dotenv').config();
-const { sequelize } = require('./src/models');
+const { Sequelize } = require('sequelize');
 
 async function fixDatabase() {
   try {
-    console.log('🔧 Arreglando base de datos...\n');
-
-    // 1. Verificar qué columnas existen
-    console.log('📊 Verificando columnas existentes en users...');
-    const [columns] = await sequelize.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = 'users'
-      ORDER BY ordinal_position;
-    `);
+    console.log('🔧 Solucionando problema de base de datos...');
     
-    console.log('Columnas actuales:');
-    columns.forEach(col => {
-      console.log(`  - ${col.column_name} (${col.data_type})`);
-    });
+    const sequelize = new Sequelize(
+      process.env.DB_NAME,
+      process.env.DB_USER,
+      process.env.DB_PASSWORD,
+      {
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        dialect: 'postgres',
+        logging: true // Mostrar SQL para debug
+      }
+    );
 
-    // 2. Agregar columnas faltantes
-    console.log('\n➕ Agregando columnas faltantes...');
+    console.log('📡 Conectando a PostgreSQL...');
+    await sequelize.authenticate();
+    console.log('✅ Conectado exitosamente');
+
+    // OPCIÓN 1: Limpiar y recrear tablas problemáticas
+    console.log('\n🗑️ Eliminando tablas problemáticas...');
     
-    try {
-      await sequelize.query(`
-        ALTER TABLE users 
-        ADD COLUMN IF NOT EXISTS free_views_left INTEGER DEFAULT 2;
-      `);
-      console.log('✅ Columna free_views_left agregada');
-    } catch (error) {
-      console.log('⚠️ Error agregando free_views_left:', error.message);
+    const tablesToDrop = [
+      'tournament_predictions',
+      'tournament_entries', 
+      'tournaments',
+      'user_stats',
+      'leagues'
+    ];
+
+    for (const table of tablesToDrop) {
+      try {
+        await sequelize.query(`DROP TABLE IF EXISTS ${table} CASCADE;`);
+        console.log(`   ✅ ${table} eliminada`);
+      } catch (error) {
+        console.log(`   ⚠️ ${table} no existía o error: ${error.message}`);
+      }
     }
 
-    try {
-      await sequelize.query(`
-        ALTER TABLE users 
-        ADD COLUMN IF NOT EXISTS last_free_view_reset DATE DEFAULT CURRENT_DATE;
-      `);
-      console.log('✅ Columna last_free_view_reset agregada');
-    } catch (error) {
-      console.log('⚠️ Error agregando last_free_view_reset:', error.message);
+    // Eliminar tipos ENUM si existen
+    console.log('\n🧹 Limpiando tipos ENUM...');
+    const enumTypes = [
+      'enum_tournaments_type',
+      'enum_tournaments_status',
+      'enum_tournament_entries_status',
+      'enum_tournament_predictions_result'
+    ];
+
+    for (const enumType of enumTypes) {
+      try {
+        await sequelize.query(`DROP TYPE IF EXISTS ${enumType} CASCADE;`);
+        console.log(`   ✅ ${enumType} eliminado`);
+      } catch (error) {
+        console.log(`   ⚠️ ${enumType} no existía`);
+      }
     }
 
-    // 3. Actualizar valores para usuarios existentes
-    console.log('\n🔄 Actualizando usuarios existentes...');
-    await sequelize.query(`
-      UPDATE users 
-      SET free_views_left = 2, 
-          last_free_view_reset = CURRENT_DATE 
-      WHERE free_views_left IS NULL;
-    `);
-
-    // 4. Verificar columnas después de los cambios
-    console.log('\n📊 Columnas después de los cambios:');
-    const [newColumns] = await sequelize.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = 'users' 
-      AND column_name IN ('free_views_left', 'last_free_view_reset')
-      ORDER BY ordinal_position;
-    `);
+    console.log('\n✅ Limpieza completada');
+    console.log('🚀 Ahora ejecuta: node createTournamentTables.js');
     
-    newColumns.forEach(col => {
-      console.log(`  ✅ ${col.column_name} (${col.data_type})`);
-    });
-
-    // 5. Mostrar usuarios actualizados
-    console.log('\n👥 Usuarios en el sistema:');
-    const [users] = await sequelize.query(`
-      SELECT name, email, is_admin as "isAdmin", is_premium as "isPremium", 
-             free_views_left as "freeViewsLeft", last_free_view_reset as "lastReset"
-      FROM users 
-      ORDER BY created_at;
-    `);
-    console.table(users);
-
-    console.log('\n✅ Base de datos arreglada!');
+    await sequelize.close();
 
   } catch (error) {
-    console.error('❌ Error:', error);
-  } finally {
-    await sequelize.close();
+    console.error('❌ Error:', error.message);
+    
+    if (error.message.includes('ECONNREFUSED')) {
+      console.log('\n🔧 PostgreSQL no está corriendo');
+      console.log('   Solución: Inicia PostgreSQL en Servicios de Windows');
+    }
   }
 }
 
-// Ejecutar
 fixDatabase();

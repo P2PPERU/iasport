@@ -1,41 +1,50 @@
 require('dotenv').config();
-const sequelize = require('./src/config/database');
+const { Sequelize } = require('sequelize');
 
-async function testFinal() {
+async function testDB() {
   try {
-    console.log('🔍 Configuración:');
-    console.log('- Host:', process.env.DB_HOST);
-    console.log('- Puerto:', process.env.DB_PORT);
-    console.log('- Base de datos:', process.env.DB_NAME);
-    console.log('- Usuario:', process.env.DB_USER);
+    console.log('Probando conexión a PostgreSQL...');
     
-    console.log('\n🔄 Conectando...');
+    const sequelize = new Sequelize(
+      process.env.DB_NAME,
+      process.env.DB_USER,
+      process.env.DB_PASSWORD,
+      {
+        host: process.env.DB_HOST,
+        port: process.env.DB_PORT,
+        dialect: 'postgres',
+        logging: false
+      }
+    );
+
     await sequelize.authenticate();
-    console.log('✅ ¡CONEXIÓN EXITOSA!');
+    console.log('✅ PostgreSQL conectado');
+    console.log('📊 Database:', process.env.DB_NAME);
     
-    // Probar consultas
-    const [users] = await sequelize.query('SELECT COUNT(*) as total FROM users');
-    console.log(`\n👥 Usuarios: ${users[0].total}`);
+    const [result] = await sequelize.query('SELECT version()');
+    console.log('📈 PostgreSQL:', result[0].version.split(' ')[1]);
     
-    const [predictions] = await sequelize.query('SELECT COUNT(*) as total FROM predictions');
-    console.log(`🎯 Predicciones: ${predictions[0].total}`);
-    
-    // Ver las predicciones
-    const [predList] = await sequelize.query(`
-      SELECT league, match, prediction, confidence, odds 
-      FROM predictions 
-      ORDER BY match_time 
-      LIMIT 3
-    `);
-    
-    console.log('\n📋 Primeras 3 predicciones:');
-    console.table(predList);
+    await sequelize.close();
+    console.log('🎯 Test completado exitosamente');
     
   } catch (error) {
-    console.error('❌ Error:', error.message);
-  } finally {
-    await sequelize.close();
+    console.error('❌ Error de conexión:', error.message);
+    
+    if (error.message.includes('ECONNREFUSED')) {
+      console.log('');
+      console.log('🔧 SOLUCIÓN:');
+      console.log('1. Abre "Servicios" en Windows (Win+R, escribe services.msc)');
+      console.log('2. Busca "postgresql" en la lista');
+      console.log('3. Click derecho -> Iniciar');
+      console.log('4. O ejecuta como admin: net start postgresql-x64-14');
+    } else if (error.message.includes('database') && error.message.includes('does not exist')) {
+      console.log('');
+      console.log('🔧 La base de datos no existe:');
+      console.log('1. Abre pgAdmin o ejecuta:');
+      console.log('   psql -U postgres -p 5433');
+      console.log('   CREATE DATABASE ia_sport_db;');
+    }
   }
 }
 
-testFinal();
+testDB();
