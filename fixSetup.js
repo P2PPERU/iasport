@@ -130,7 +130,7 @@ async function fixSetupSimple() {
     
     console.log('\n🔑 Credenciales:');
     console.log('   Demo: demo@iasport.pe / demo123');
-    console.log('   Admin: admin@iasport.pe / admin123');
+    console.log('   Admin:   / admin123');
     
     console.log('\n✅ Setup completado!');
 

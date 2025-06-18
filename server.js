@@ -1,3 +1,4 @@
+// server.js - ACTUALIZADO CON PREDICTMASTER
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -15,10 +16,10 @@ const corsOptions = {
       'http://localhost:3001',
       'http://localhost:5173', // Vite
       'http://localhost:5174',
-      'https://app.iasport.pe' // Producción
+      'https://app.iasport.pe', // Producción
+      'https://predictmaster.pe' // Nuevo dominio para torneos
     ];
     
-    // Permitir requests sin origin (como Postman)
     if (!origin) return callback(null, true);
     
     if (allowedOrigins.indexOf(origin) !== -1) {
@@ -33,7 +34,7 @@ const corsOptions = {
 
 // Middleware de seguridad
 app.use(helmet({
-  contentSecurityPolicy: false, // Deshabilitado para desarrollo
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
 }));
 app.use(cors(corsOptions));
@@ -45,12 +46,20 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 100, // límite de requests
+  max: 100,
   message: 'Demasiadas peticiones desde esta IP, intenta de nuevo más tarde.'
 });
 
-// Aplicar rate limiting solo a rutas de autenticación
+// Rate limiting específico para torneos (más permisivo)
+const tournamentLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200, // Más requests para funcionalidad de torneos
+  message: 'Límite de requests para torneos excedido'
+});
+
+// Aplicar rate limiting
 app.use('/api/auth', limiter);
+app.use('/api/tournaments', tournamentLimiter);
 
 // Logging middleware para desarrollo
 if (process.env.NODE_ENV === 'development') {
@@ -75,15 +84,16 @@ app.get('/health', (req, res) => {
       predictions: true,
       authentication: true,
       pushNotifications: true,
-      payments: false // Pendiente
+      tournaments: true, // NUEVA FUNCIONALIDAD
+      payments: false
     }
   });
 });
 
-// Ruta principal
+// Ruta principal con información actualizada
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'IA SPORT API v1.0',
+    message: 'IA SPORT & PREDICTMASTER API v2.0',
     status: 'active',
     timestamp: new Date().toISOString(),
     endpoints: {
@@ -101,6 +111,17 @@ app.get('/', (req, res) => {
         byDate: 'GET /api/predictions/date/:date',
         unlock: 'POST /api/predictions/:id/unlock'
       },
+      // NUEVOS ENDPOINTS DE TORNEOS
+      tournaments: {
+        list: 'GET /api/tournaments',
+        single: 'GET /api/tournaments/:id',
+        join: 'POST /api/tournaments/:id/join',
+        confirmEntry: 'POST /api/tournaments/confirm-entry',
+        submitPrediction: 'POST /api/tournaments/:tournamentId/predictions',
+        globalRanking: 'GET /api/tournaments/ranking/global',
+        userStats: 'GET /api/tournaments/user/stats',
+        userHistory: 'GET /api/tournaments/user/history'
+      },
       users: {
         profile: 'GET /api/users/profile',
         updatePreferences: 'PUT /api/users/preferences',
@@ -115,12 +136,24 @@ app.get('/', (req, res) => {
       },
       admin: {
         stats: 'GET /api/admin/stats',
-        notificationStats: 'GET /api/admin/notifications/stats',
+        // Predicciones
         predictions: {
           create: 'POST /api/admin/predictions',
           update: 'PUT /api/admin/predictions/:id',
           updateResult: 'PUT /api/admin/predictions/:id/result',
           delete: 'DELETE /api/admin/predictions/:id'
+        },
+        // Torneos (NUEVO)
+        tournaments: {
+          stats: 'GET /api/admin/tournaments/stats',
+          list: 'GET /api/admin/tournaments',
+          create: 'POST /api/admin/tournaments',
+          update: 'PUT /api/admin/tournaments/:id',
+          updateStatus: 'PUT /api/admin/tournaments/:id/status',
+          delete: 'DELETE /api/admin/tournaments/:id',
+          participants: 'GET /api/admin/tournaments/:id/participants',
+          removeParticipant: 'DELETE /api/admin/tournaments/:tournamentId/participants/:userId',
+          recalculate: 'POST /api/admin/tournaments/:id/recalculate'
         },
         users: {
           list: 'GET /api/admin/users',
@@ -146,6 +179,7 @@ app.get('/', (req, res) => {
 // Rutas de la API
 app.use('/api/auth', require('./src/routes/auth.routes'));
 app.use('/api/predictions', require('./src/routes/predictions.routes'));
+app.use('/api/tournaments', require('./src/routes/tournaments.routes')); // NUEVA RUTA
 app.use('/api/users', require('./src/routes/users.routes'));
 app.use('/api/admin', require('./src/routes/admin.routes'));
 app.use('/api/notifications', require('./src/routes/notifications.routes'));
@@ -156,7 +190,10 @@ app.use((req, res, next) => {
   res.status(404).json({
     success: false,
     message: 'Endpoint no encontrado',
-    path: req.path
+    path: req.path,
+    suggestion: req.path.startsWith('/api/tournaments') ? 
+      'Verifica la documentación de torneos en GET /' : 
+      'Verifica los endpoints disponibles en GET /'
   });
 });
 
@@ -182,6 +219,15 @@ app.use((err, req, res, next) => {
       success: false,
       message: 'El valor ya existe',
       field: err.errors[0].path
+    });
+  }
+  
+  // Error de clave foránea
+  if (err.name === 'SequelizeForeignKeyConstraintError') {
+    return res.status(400).json({
+      success: false,
+      message: 'Referencia inválida',
+      details: 'El registro referenciado no existe'
     });
   }
   
@@ -213,10 +259,11 @@ app.use((err, req, res, next) => {
 });
 
 // Puerto y arranque del servidor
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001; // Cambiado a 3001 por defecto
 
-// Variable para los jobs
+// Variables para los jobs
 let notificationJobs = null;
+let tournamentJobs = null; // NUEVO: Jobs de torneos
 
 // Función para arrancar el servidor
 const startServer = async () => {
@@ -239,13 +286,25 @@ const startServer = async () => {
       } catch (error) {
         console.error('⚠️ Error iniciando jobs de notificaciones:', error.message);
       }
+    }
+    
+    // NUEVO: Iniciar jobs de torneos
+    if (process.env.NODE_ENV === 'production' || process.env.ENABLE_TOURNAMENT_JOBS === 'true') {
+      try {
+        const TournamentJobs = require('./src/jobs/tournamentJobs');
+        TournamentJobs.init();
+        tournamentJobs = TournamentJobs;
+        console.log('✅ Jobs de torneos iniciados');
+      } catch (error) {
+        console.error('⚠️ Error iniciando jobs de torneos:', error.message);
+      }
     } else {
-      console.log('ℹ️ Jobs de notificaciones deshabilitados (solo en producción)');
+      console.log('ℹ️ Jobs de torneos deshabilitados');
     }
     
     // Arrancar servidor
     app.listen(PORT, () => {
-      console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+      console.log(`🚀 IA SPORT & PREDICTMASTER API corriendo en http://localhost:${PORT}`);
       console.log(`📚 Ambiente: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔐 JWT Secret configurado: ${process.env.JWT_SECRET ? 'Sí' : 'No (usando default)'}`);
       console.log(`🔔 Push Notifications: ${process.env.VAPID_PUBLIC_KEY ? 'Configuradas' : 'No configuradas'}`);
@@ -253,9 +312,17 @@ const startServer = async () => {
       console.log(`   - API Info: GET http://localhost:${PORT}/`);
       console.log(`   - Health: GET http://localhost:${PORT}/health`);
       console.log(`   - Predicciones: GET http://localhost:${PORT}/api/predictions`);
+      console.log(`   - Torneos: GET http://localhost:${PORT}/api/tournaments`); // NUEVO
       console.log(`   - Login: POST http://localhost:${PORT}/api/auth/login`);
       console.log(`   - Admin Stats: GET http://localhost:${PORT}/api/admin/stats`);
-      console.log(`   - Notifications: GET http://localhost:${PORT}/api/notifications/vapid-public-key`);
+      console.log(`   - Admin Torneos: GET http://localhost:${PORT}/api/admin/tournaments/stats`); // NUEVO
+      console.log('\n🎯 PREDICTMASTER - Plataforma de Torneos de Pronósticos');
+      console.log('🏆 Nuevas funcionalidades:');
+      console.log('   • Sistema completo de torneos');
+      console.log('   • Rankings en tiempo real');
+      console.log('   • Ligas de usuarios');
+      console.log('   • Sistema de scoring avanzado');
+      console.log('   • Gestión automática de torneos');
       console.log('\n💡 Usa Ctrl+C para detener el servidor');
     });
   } catch (error) {
@@ -274,6 +341,11 @@ process.on('SIGINT', async () => {
       console.log('✅ Jobs de notificaciones detenidos');
     }
     
+    if (tournamentJobs) {
+      tournamentJobs.stop();
+      console.log('✅ Jobs de torneos detenidos');
+    }
+    
     await sequelize.close();
     console.log('✅ Conexión a base de datos cerrada');
     process.exit(0);
@@ -286,9 +358,8 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('\n👋 Cerrando servidor (SIGTERM)...');
   try {
-    if (notificationJobs) {
-      notificationJobs.stop();
-    }
+    if (notificationJobs) notificationJobs.stop();
+    if (tournamentJobs) tournamentJobs.stop();
     await sequelize.close();
     process.exit(0);
   } catch (error) {
