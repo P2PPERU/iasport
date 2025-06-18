@@ -61,7 +61,7 @@ const runTests = async () => {
     showResult('Servidor activo', healthCheck.success);
     
     if (!healthCheck.success) {
-      console.log('❌ Servidor no disponible. Iniciando servidor...');
+      console.log('❌ Servidor no disponible. Asegúrate de que esté corriendo con: npm start');
       return;
     }
 
@@ -83,6 +83,7 @@ const runTests = async () => {
       showResult('Login administrador', true);
     } else {
       showResult('Login administrador', false, adminLogin.error);
+      console.log('\n💡 SOLUCIÓN: Ejecuta primero: node createTestUsers.js');
       return;
     }
 
@@ -98,6 +99,7 @@ const runTests = async () => {
       showResult('Login usuario premium', true);
     } else {
       showResult('Login usuario premium', false, userLogin.error);
+      console.log('\n💡 SOLUCIÓN: Ejecuta primero: node createTestUsers.js');
       return;
     }
 
