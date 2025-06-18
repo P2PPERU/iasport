@@ -1,4 +1,4 @@
-// src/routes/tournaments.routes.js - ACTUALIZADO CON MIDDLEWARES
+// src/routes/tournaments.routes.js - ACTUALIZADO CON WALLET INTEGRATION
 const router = require('express').Router();
 const tournamentsController = require('../controllers/tournaments.controller');
 const requireAuth = require('../middleware/requireAuth.middleware');
@@ -31,8 +31,11 @@ router.post('/:id/join',
   tournamentsController.joinTournament
 );
 
-// Confirmar entrada después del pago
-router.post('/confirm-entry', tournamentsController.confirmEntry);
+// Salir de un torneo (antes de que empiece)
+router.post('/:id/leave', 
+  tournamentMiddleware.validateTournamentExists,
+  tournamentsController.leaveTournament
+);
 
 // Enviar predicción en un torneo (con validaciones completas)
 router.post('/:tournamentId/predictions', 

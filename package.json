@@ -9,31 +9,25 @@
     "test": "node testFullBackend.js",
     "test:predictmaster": "node testPredictMaster.js",
     "test:admin": "node testAdminComplete.js",
-    
     "setup": "node setupPredictMaster.js",
     "setup:basic": "node fixSetup.js",
     "setup:tournaments": "node createTournamentTables.js",
-    
     "db:test": "node testDB.js",
     "db:migrate": "node createTournamentTables.js",
     "db:seed": "node setupPredictMaster.js",
-    
     "admin:create": "node createAdminUser.js",
     "users:create": "node createRegularUser.js",
     "passwords:update": "node updatePasswords.js",
-    
     "notifications:generate-keys": "node generateVapidKeys.js",
     "notifications:test": "node testNotifications.js",
-    
     "stats": "node -e \"require('./src/jobs/tournamentJobs').getJobStats().then(console.log)\"",
     "health": "curl -s http://localhost:3001/health | jq .",
-    
     "lint": "echo 'Linter no configurado'",
     "build": "echo 'No se requiere build para este proyecto'"
   },
   "keywords": [
     "sports",
-    "predictions", 
+    "predictions",
     "tournaments",
     "skill-based",
     "predictmaster",
@@ -56,6 +50,7 @@
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "express-rate-limit": "^7.5.0",
+    "express-validator": "^7.2.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.1.0",

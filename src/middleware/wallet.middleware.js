@@ -1,180 +1,204 @@
 // src/middleware/wallet.middleware.js
-const { body, param, query, validationResult } = require('express-validator');
-const { validateAmount, validatePeruvianPhone } = require('../utils/walletHelpers');
+const { body, validationResult } = require('express-validator');
+const { DepositRequest, WithdrawalRequest, WalletTransaction } = require('../models');
+const { validateAmount, checkDailyLimits } = require('../utils/walletHelpers');
 
-// Middleware para manejar errores de validación
+// =====================================================
+// VALIDAR ERRORES DE EXPRESS-VALIDATOR
+// =====================================================
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({
       success: false,
-      message: 'Error de validación',
+      message: 'Datos inválidos',
       errors: errors.array()
     });
   }
   next();
 };
 
-// Validar monto general
-const validateAmountMiddleware = (field = 'amount') => {
-  return body(field)
-    .isFloat({ min: 0.01 })
-    .withMessage('El monto debe ser mayor a 0')
-    .toFloat()
-    .custom((value) => {
-      // Verificar que tenga máximo 2 decimales
-      const decimals = (value.toString().split('.')[1] || '').length;
-      if (decimals > 2) {
-        throw new Error('El monto debe tener máximo 2 decimales');
-      }
-      return true;
-    });
-};
-
-// Validaciones para crear depósito
-const validateCreateDeposit = [
-  validateAmountMiddleware('amount')
-    .custom((value) => {
-      const validation = validateAmount(value, 'DEPOSIT');
-      if (!validation.isValid) {
-        throw new Error(`Monto debe estar entre S/ ${validation.min} y S/ ${validation.max}`);
-      }
-      return true;
-    }),
+// =====================================================
+// VALIDAR CREACIÓN DE DEPÓSITO
+// =====================================================
+exports.validateCreateDeposit = [
+  body('amount')
+    .isFloat({ min: 10, max: 5000 })
+    .withMessage('El monto debe estar entre S/ 10 y S/ 5000'),
   
   body('method')
     .isIn(['YAPE', 'PLIN', 'BANK_TRANSFER'])
     .withMessage('Método de pago inválido'),
   
   body('transactionNumber')
-    .optional()
-    .isString()
-    .trim()
     .isLength({ min: 5, max: 50 })
-    .withMessage('Número de transacción inválido'),
+    .withMessage('Número de transacción debe tener entre 5 y 50 caracteres'),
   
   body('proofImageUrl')
     .optional()
     .isURL()
-    .withMessage('URL de imagen inválida'),
+    .withMessage('URL de comprobante inválida'),
   
   handleValidationErrors
 ];
 
-// Validaciones para crear retiro
-const validateCreateWithdrawal = [
-  validateAmountMiddleware('amount')
-    .custom((value) => {
-      const validation = validateAmount(value, 'WITHDRAWAL');
-      if (!validation.isValid) {
-        throw new Error(`Monto debe estar entre S/ ${validation.min} y S/ ${validation.max}`);
-      }
-      return true;
-    }),
+// =====================================================
+// VALIDAR CREACIÓN DE RETIRO
+// =====================================================
+exports.validateCreateWithdrawal = [
+  body('amount')
+    .isFloat({ min: 20, max: 500 })
+    .withMessage('El monto debe estar entre S/ 20 y S/ 500'),
   
   body('method')
     .isIn(['YAPE', 'PLIN', 'BANK_TRANSFER'])
     .withMessage('Método de pago inválido'),
   
   body('accountNumber')
-    .notEmpty()
-    .withMessage('Número de cuenta requerido')
-    .custom((value, { req }) => {
-      if (req.body.method === 'YAPE' || req.body.method === 'PLIN') {
-        if (!validatePeruvianPhone(value)) {
-          throw new Error('Número de teléfono peruano inválido (debe empezar con 519)');
-        }
-      }
-      return true;
-    }),
+    .isLength({ min: 5, max: 50 })
+    .withMessage('Número de cuenta inválido'),
   
   body('accountName')
-    .notEmpty()
-    .withMessage('Nombre del titular requerido')
     .isLength({ min: 3, max: 100 })
-    .withMessage('Nombre debe tener entre 3 y 100 caracteres'),
+    .withMessage('Nombre de cuenta debe tener entre 3 y 100 caracteres'),
   
   handleValidationErrors
 ];
 
-// Validaciones para aprobar depósito (admin)
-const validateApproveDeposit = [
-  param('id')
-    .isUUID()
-    .withMessage('ID de depósito inválido'),
-  
+// =====================================================
+// VALIDAR APROBACIÓN DE DEPÓSITO
+// =====================================================
+exports.validateApproveDeposit = [
   body('adminNotes')
     .optional()
-    .isString()
-    .trim()
     .isLength({ max: 500 })
-    .withMessage('Notas muy largas (máximo 500 caracteres)'),
+    .withMessage('Notas del admin no pueden exceder 500 caracteres'),
   
   handleValidationErrors
 ];
 
-// Validaciones para procesar retiro (admin)
-const validateProcessWithdrawal = [
-  param('id')
-    .isUUID()
-    .withMessage('ID de retiro inválido'),
+// =====================================================
+// VALIDAR PROCESAMIENTO DE RETIRO
+// =====================================================
+exports.validateProcessWithdrawal = [
+  body('adminNotes')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Notas del admin no pueden exceder 500 caracteres'),
   
   body('externalTransactionId')
     .optional()
-    .isString()
-    .trim()
-    .isLength({ min: 3, max: 100 })
+    .isLength({ min: 5, max: 100 })
     .withMessage('ID de transacción externa inválido'),
-  
-  body('adminNotes')
-    .optional()
-    .isString()
-    .trim()
-    .isLength({ max: 500 })
-    .withMessage('Notas muy largas (máximo 500 caracteres)'),
   
   handleValidationErrors
 ];
 
-// Validaciones para ajuste manual (admin)
-const validateManualAdjustment = [
-  param('userId')
+// =====================================================
+// VALIDAR AJUSTE MANUAL
+// =====================================================
+exports.validateManualAdjustment = [
+  body('userId')
     .isUUID()
     .withMessage('ID de usuario inválido'),
   
-  validateAmountMiddleware('amount'),
+  body('amount')
+    .isFloat({ min: 0.01, max: 10000 })
+    .withMessage('Monto debe estar entre S/ 0.01 y S/ 10,000'),
   
   body('type')
     .isIn(['CREDIT', 'DEBIT'])
     .withMessage('Tipo debe ser CREDIT o DEBIT'),
   
   body('reason')
-    .notEmpty()
-    .withMessage('Razón es requerida')
-    .isLength({ min: 10, max: 200 })
-    .withMessage('Razón debe tener entre 10 y 200 caracteres'),
+    .isLength({ min: 10, max: 255 })
+    .withMessage('Razón debe tener entre 10 y 255 caracteres'),
   
   handleValidationErrors
 ];
 
-// Validar límites diarios
-const checkDailyWithdrawalLimit = async (req, res, next) => {
+// =====================================================
+// VERIFICAR SOLICITUDES PENDIENTES
+// =====================================================
+exports.checkPendingRequests = (type) => {
+  return async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      
+      let pendingRequest;
+      
+      if (type === 'deposit') {
+        pendingRequest = await DepositRequest.findOne({
+          where: {
+            userId,
+            status: 'PENDING'
+          }
+        });
+        
+        if (pendingRequest) {
+          return res.status(400).json({
+            success: false,
+            message: 'Ya tienes una solicitud de depósito pendiente',
+            pendingRequest: {
+              id: pendingRequest.id,
+              amount: pendingRequest.amount,
+              createdAt: pendingRequest.createdAt
+            }
+          });
+        }
+      }
+      
+      if (type === 'withdrawal') {
+        pendingRequest = await WithdrawalRequest.findOne({
+          where: {
+            userId,
+            status: ['PENDING', 'PROCESSING']
+          }
+        });
+        
+        if (pendingRequest) {
+          return res.status(400).json({
+            success: false,
+            message: 'Ya tienes una solicitud de retiro en proceso',
+            pendingRequest: {
+              id: pendingRequest.id,
+              amount: pendingRequest.amount,
+              status: pendingRequest.status,
+              createdAt: pendingRequest.createdAt
+            }
+          });
+        }
+      }
+      
+      next();
+      
+    } catch (error) {
+      console.error('Error verificando solicitudes pendientes:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error al verificar solicitudes pendientes'
+      });
+    }
+  };
+};
+
+// =====================================================
+// VERIFICAR LÍMITE DIARIO DE RETIROS
+// =====================================================
+exports.checkDailyWithdrawalLimit = async (req, res, next) => {
   try {
-    const { amount } = req.body;
     const userId = req.user.id;
-    
-    const { checkDailyLimits } = require('../utils/walletHelpers');
-    const { WalletTransaction } = require('../models');
+    const { amount } = req.body;
     
     const limits = await checkDailyLimits(userId, amount, 'WITHDRAWAL', WalletTransaction);
     
     if (limits.wouldExceed) {
       return res.status(400).json({
         success: false,
-        message: 'Límite diario excedido',
+        message: 'Límite diario de retiros excedido',
         data: {
           dailyLimit: limits.limit,
-          usedToday: limits.used,
+          used: limits.used,
           available: limits.available,
           requested: amount
         }
@@ -182,63 +206,161 @@ const checkDailyWithdrawalLimit = async (req, res, next) => {
     }
     
     next();
+    
   } catch (error) {
     console.error('Error verificando límite diario:', error);
     res.status(500).json({
       success: false,
-      message: 'Error al verificar límites'
+      message: 'Error al verificar límite diario'
     });
   }
 };
 
-// Verificar si usuario tiene solicitud pendiente
-const checkPendingRequests = (type) => {
-  return async (req, res, next) => {
-    try {
-      const userId = req.user.id;
-      const Model = type === 'deposit' 
-        ? require('../models').DepositRequest 
-        : require('../models').WithdrawalRequest;
-      
-      const pendingRequest = await Model.findOne({
-        where: {
-          userId,
-          status: type === 'deposit' ? 'PENDING' : ['PENDING', 'PROCESSING']
+// =====================================================
+// VERIFICAR SALDO SUFICIENTE
+// =====================================================
+exports.checkSufficientBalance = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { amount } = req.body;
+    
+    const WalletService = require('../services/wallet.service');
+    const availableBalance = await WalletService.getAvailableBalance(userId);
+    
+    if (availableBalance < amount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Saldo insuficiente',
+        data: {
+          available: availableBalance,
+          required: amount,
+          shortfall: amount - availableBalance
         }
       });
-      
-      if (pendingRequest) {
-        return res.status(400).json({
-          success: false,
-          message: `Ya tienes una solicitud de ${type === 'deposit' ? 'depósito' : 'retiro'} en proceso`,
-          data: {
-            requestId: pendingRequest.id,
-            amount: pendingRequest.amount,
-            status: pendingRequest.status,
-            createdAt: pendingRequest.createdAt
-          }
-        });
-      }
-      
-      next();
-    } catch (error) {
-      console.error('Error verificando solicitudes pendientes:', error);
-      res.status(500).json({
+    }
+    
+    next();
+    
+  } catch (error) {
+    console.error('Error verificando saldo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al verificar saldo'
+    });
+  }
+};
+
+// =====================================================
+// VALIDAR MONTO SEGÚN TIPO DE OPERACIÓN
+// =====================================================
+exports.validateAmountForOperation = (operationType) => {
+  return (req, res, next) => {
+    const { amount } = req.body;
+    
+    const validation = validateAmount(amount, operationType);
+    
+    if (!validation.isValid) {
+      return res.status(400).json({
         success: false,
-        message: 'Error al verificar solicitudes'
+        message: `Monto inválido para ${operationType}`,
+        data: {
+          amount,
+          minAllowed: validation.min,
+          maxAllowed: validation.max
+        }
       });
     }
+    
+    next();
   };
 };
 
-module.exports = {
-  validateCreateDeposit,
-  validateCreateWithdrawal,
-  validateApproveDeposit,
-  validateProcessWithdrawal,
-  validateManualAdjustment,
-  checkDailyWithdrawalLimit,
-  checkPendingRequests,
-  validateAmountMiddleware,
-  handleValidationErrors
+// =====================================================
+// VERIFICAR PERMISOS DE WALLET
+// =====================================================
+exports.checkWalletPermissions = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { User } = require('../models');
+    
+    const user = await User.findByPk(userId);
+    const wallet = await user.getWallet();
+    
+    if (!wallet) {
+      return res.status(404).json({
+        success: false,
+        message: 'Wallet no encontrada'
+      });
+    }
+    
+    if (wallet.status !== 'ACTIVE') {
+      return res.status(403).json({
+        success: false,
+        message: `Wallet ${wallet.status}. Contacta al soporte.`,
+        walletStatus: wallet.status
+      });
+    }
+    
+    req.wallet = wallet;
+    next();
+    
+  } catch (error) {
+    console.error('Error verificando permisos de wallet:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al verificar permisos de wallet'
+    });
+  }
 };
+
+// =====================================================
+// RATE LIMITING PARA OPERACIONES DE WALLET
+// =====================================================
+exports.walletRateLimit = (maxRequests = 10, windowMinutes = 15) => {
+  const requests = new Map();
+  
+  return (req, res, next) => {
+    const userId = req.user.id;
+    const now = Date.now();
+    const windowMs = windowMinutes * 60 * 1000;
+    
+    if (!requests.has(userId)) {
+      requests.set(userId, []);
+    }
+    
+    const userRequests = requests.get(userId);
+    
+    // Limpiar requests antiguos
+    const validRequests = userRequests.filter(time => now - time < windowMs);
+    
+    if (validRequests.length >= maxRequests) {
+      return res.status(429).json({
+        success: false,
+        message: 'Demasiadas solicitudes. Intenta más tarde.',
+        retryAfter: Math.ceil((validRequests[0] + windowMs - now) / 1000)
+      });
+    }
+    
+    validRequests.push(now);
+    requests.set(userId, validRequests);
+    
+    next();
+  };
+};
+
+// =====================================================
+// MIDDLEWARE COMBINADOS
+// =====================================================
+exports.validateDepositCreation = [
+  exports.validateCreateDeposit,
+  exports.checkPendingRequests('deposit'),
+  exports.walletRateLimit(5, 60) // 5 depósitos por hora
+];
+
+exports.validateWithdrawalCreation = [
+  exports.validateCreateWithdrawal,
+  exports.checkSufficientBalance,
+  exports.checkDailyWithdrawalLimit,
+  exports.checkPendingRequests('withdrawal'),
+  exports.walletRateLimit(3, 60) // 3 retiros por hora
+];

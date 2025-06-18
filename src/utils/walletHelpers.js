@@ -1,5 +1,6 @@
-// src/utils/walletHelpers.js
+// src/utils/walletHelpers.js - CORREGIDO
 const crypto = require('crypto');
+const { Op } = require('sequelize');
 
 /**
  * Formatear monto a 2 decimales
@@ -47,37 +48,61 @@ const calculateFee = (amount, type = 'TOURNAMENT_ENTRY') => {
  * Verificar límites diarios
  */
 const checkDailyLimits = async (userId, amount, type, WalletTransaction) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  
-  const dailyTotal = await WalletTransaction.sum('amount', {
-    where: {
-      userId,
-      type: 'DEBIT',
-      category: type,
-      status: 'COMPLETED',
-      createdAt: {
-        [require('sequelize').Op.between]: [today, tomorrow]
-      }
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Obtener wallet del usuario
+    const { User, Wallet } = require('../models');
+    const user = await User.findByPk(userId);
+    const wallet = await user.getWallet();
+    
+    if (!wallet) {
+      return {
+        used: 0,
+        limit: 1000,
+        available: 1000,
+        wouldExceed: false
+      };
     }
-  }) || 0;
-  
-  const limits = {
-    WITHDRAWAL: parseFloat(process.env.WALLET_MAX_WITHDRAWAL_DAILY || 1000),
-    TOURNAMENT_ENTRY: parseFloat(process.env.WALLET_MAX_TOURNAMENT_DAILY || 500)
-  };
-  
-  const limit = limits[type] || Infinity;
-  
-  return {
-    used: parseFloat(dailyTotal),
-    limit: limit,
-    available: limit - parseFloat(dailyTotal),
-    wouldExceed: (parseFloat(dailyTotal) + amount) > limit
-  };
+    
+    const dailyTotal = await WalletTransaction.sum('amount', {
+      where: {
+        walletId: wallet.id,
+        type: 'DEBIT',
+        category: type,
+        status: 'COMPLETED',
+        createdAt: {
+          [Op.between]: [today, tomorrow]
+        }
+      }
+    }) || 0;
+    
+    const limits = {
+      WITHDRAWAL: parseFloat(process.env.WALLET_MAX_WITHDRAWAL_DAILY || 1000),
+      TOURNAMENT_ENTRY: parseFloat(process.env.WALLET_MAX_TOURNAMENT_DAILY || 500)
+    };
+    
+    const limit = limits[type] || Infinity;
+    
+    return {
+      used: parseFloat(dailyTotal),
+      limit: limit,
+      available: limit - parseFloat(dailyTotal),
+      wouldExceed: (parseFloat(dailyTotal) + amount) > limit
+    };
+  } catch (error) {
+    console.error('Error en checkDailyLimits:', error);
+    return {
+      used: 0,
+      limit: 1000,
+      available: 1000,
+      wouldExceed: false
+    };
+  }
 };
 
 /**
