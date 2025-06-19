@@ -211,7 +211,7 @@ exports.joinTournament = async (req, res) => {
     }
 
     // Para freerolls, inscripción directa
-    if (tournament.buyIn === 0) {
+    if (parseFloat(tournament.buyIn) === 0) {
       const entry = await TournamentEntry.create({
         userId,
         tournamentId: id,
