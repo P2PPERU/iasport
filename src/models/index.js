@@ -1,4 +1,5 @@
-// src/models/index.js - ACTUALIZADO CON WALLET
+// src/models/index.js - ACTUALIZADO CON WALLET Y ALIAS
+
 const sequelize = require('../config/database');
 
 // Modelos existentes
@@ -84,7 +85,7 @@ WalletTransaction.belongsTo(Wallet, { foreignKey: 'wallet_id' });
 
 // User ↔ DepositRequest (1:N)
 User.hasMany(DepositRequest, { foreignKey: 'user_id', as: 'depositRequests' });
-DepositRequest.belongsTo(User, { foreignKey: 'user_id' });
+DepositRequest.belongsTo(User, { foreignKey: 'user_id', as: 'user' }); // Alias agregado
 
 // Wallet ↔ DepositRequest (1:N)
 Wallet.hasMany(DepositRequest, { foreignKey: 'wallet_id', as: 'depositRequests' });
@@ -96,7 +97,7 @@ WalletTransaction.hasOne(DepositRequest, { foreignKey: 'wallet_transaction_id' }
 
 // User ↔ WithdrawalRequest (1:N)
 User.hasMany(WithdrawalRequest, { foreignKey: 'user_id', as: 'withdrawalRequests' });
-WithdrawalRequest.belongsTo(User, { foreignKey: 'user_id' });
+WithdrawalRequest.belongsTo(User, { foreignKey: 'user_id', as: 'user' }); // Alias agregado
 
 // Wallet ↔ WithdrawalRequest (1:N)
 Wallet.hasMany(WithdrawalRequest, { foreignKey: 'wallet_id', as: 'withdrawalRequests' });
@@ -125,7 +126,7 @@ WalletTransaction.hasOne(TournamentEntry, { foreignKey: 'wallet_transaction_id' 
 // Obtener wallet del usuario (crear si no existe)
 User.prototype.getOrCreateWallet = async function(transaction = null) {
   let wallet = await this.getWallet({ transaction });
-  
+
   if (!wallet) {
     wallet = await Wallet.create({
       userId: this.id,
@@ -133,7 +134,7 @@ User.prototype.getOrCreateWallet = async function(transaction = null) {
       currency: 'PEN'
     }, { transaction });
   }
-  
+
   return wallet;
 };
 
@@ -156,7 +157,6 @@ const syncDatabase = async () => {
   try {
     await sequelize.sync({ alter: false });
     console.log('✅ Todos los modelos sincronizados con la base de datos');
-    
     // Crear ligas por defecto si no existen
     await createDefaultLeagues();
   } catch (error) {
@@ -220,7 +220,6 @@ const createDefaultLeagues = async () => {
       defaults: league
     });
   }
-  
   console.log('✅ Ligas por defecto creadas/verificadas');
 };
 

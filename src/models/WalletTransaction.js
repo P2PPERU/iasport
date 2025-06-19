@@ -93,30 +93,15 @@ const WalletTransaction = sequelize.define('WalletTransaction', {
   }
 }, {
   tableName: 'wallet_transactions',
-  underscored: true,
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
+  underscored: true, // Esto es clave para snake_case
+  timestamps: true,  // Usa automáticamente created_at y updated_at
   indexes: [
-    {
-      fields: ['wallet_id']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['category']
-    },
-    {
-      fields: ['reference']
-    },
-    {
-      unique: true,
-      fields: ['external_reference']
-    },
-    {
-      fields: ['created_at']
-    }
+    { fields: ['wallet_id'] },
+    { fields: ['status'] },
+    { fields: ['category'] },
+    { fields: ['reference'] },
+    { unique: true, fields: ['external_reference'] },
+    { fields: ['created_at'] }
   ]
 });
 

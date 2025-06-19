@@ -1,4 +1,4 @@
-// src/utils/walletHelpers.js - CORREGIDO
+// src/utils/walletHelpers.js
 const crypto = require('crypto');
 const { Op } = require('sequelize');
 

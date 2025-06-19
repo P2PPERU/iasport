@@ -92,22 +92,12 @@ const WithdrawalRequest = sequelize.define('WithdrawalRequest', {
 }, {
   tableName: 'withdrawal_requests',
   underscored: true,
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
+  timestamps: true, // Usa automáticamente created_at y updated_at
   indexes: [
-    {
-      fields: ['user_id']
-    },
-    {
-      fields: ['wallet_id']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['created_at']
-    }
+    { fields: ['user_id'] },
+    { fields: ['wallet_id'] },
+    { fields: ['status'] },
+    { fields: ['created_at'] }
   ]
 });
 

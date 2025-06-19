@@ -1,4 +1,4 @@
-// src/models/DepositRequest.js
+// src/models/DepositRequest.js 
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
@@ -91,22 +91,12 @@ const DepositRequest = sequelize.define('DepositRequest', {
 }, {
   tableName: 'deposit_requests',
   underscored: true,
-  timestamps: true,
-  createdAt: 'created_at',
-  updatedAt: 'updated_at',
+  timestamps: true, // ya activa created_at y updated_at en snake_case
   indexes: [
-    {
-      fields: ['user_id']
-    },
-    {
-      fields: ['wallet_id']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['created_at']
-    }
+    { fields: ['user_id'] },
+    { fields: ['wallet_id'] },
+    { fields: ['status'] },
+    { fields: ['created_at'] }
   ]
 });
 
@@ -121,9 +111,11 @@ DepositRequest.prototype.canApprove = function() {
 
 // Hook para verificar expiración antes de aprobar
 DepositRequest.beforeUpdate(async (depositRequest, options) => {
-  if (depositRequest.changed('status') && 
-      depositRequest.status === 'APPROVED' && 
-      depositRequest.isExpired()) {
+  if (
+    depositRequest.changed('status') &&
+    depositRequest.status === 'APPROVED' &&
+    depositRequest.isExpired()
+  ) {
     throw new Error('No se puede aprobar un depósito expirado');
   }
 });

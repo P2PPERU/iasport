@@ -377,7 +377,57 @@ exports.getGlobalRanking = async (req, res) => {
   try {
     const { period = 'all', limit = 100 } = req.query;
     
-    const ranking = await User.getGlobalRanking(period, parseInt(limit));
+    // Implementar lógica de ranking según el período
+    let ranking = [];
+    
+    if (period === 'all') {
+      // Ranking global basado en UserStats
+      ranking = await UserStats.findAll({
+        include: [
+          { model: User, attributes: ['id', 'name'] },
+          { model: League }
+        ],
+        order: [
+          ['roi', 'DESC'],
+          ['success_rate', 'DESC']
+        ],
+        limit: parseInt(limit)
+      });
+    } else if (period === 'monthly') {
+      // Ranking mensual
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      ranking = await UserStats.findAll({
+        include: [
+          { model: User, attributes: ['id', 'name'] },
+          { model: League }
+        ],
+        order: [
+          [sequelize.literal('"monthly_stats"->\'earnings\''), 'DESC'],
+          [sequelize.literal('"monthly_stats"->\'correct\''), 'DESC']
+        ],
+        limit: parseInt(limit)
+      });
+    } else if (period === 'weekly') {
+      // Ranking semanal
+      const startOfWeek = new Date();
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      ranking = await UserStats.findAll({
+        include: [
+          { model: User, attributes: ['id', 'name'] },
+          { model: League }
+        ],
+        order: [
+          [sequelize.literal('"weekly_stats"->\'earnings\''), 'DESC'],
+          [sequelize.literal('"weekly_stats"->\'correct\''), 'DESC']
+        ],
+        limit: parseInt(limit)
+      });
+    }
 
     res.json({
       success: true,
@@ -536,8 +586,10 @@ exports.leaveTournament = async (req, res) => {
     }
 
     // Si pagó buy-in, hacer reembolso
+    let refundResult = { success: false, newBalance: 0 };
+    
     if (entry.buyInPaid > 0) {
-      const refundResult = await WalletService.refundTournamentEntry(
+      refundResult = await WalletService.refundTournamentEntry(
         userId,
         id,
         entry.buyInPaid,
@@ -547,7 +599,8 @@ exports.leaveTournament = async (req, res) => {
       if (!refundResult.success) {
         return res.status(500).json({
           success: false,
-          message: 'Error procesando reembolso'
+          message: 'Error procesando reembolso',
+          error: refundResult.error
         });
       }
     }
@@ -568,7 +621,7 @@ exports.leaveTournament = async (req, res) => {
         'Has salido del torneo exitosamente',
       data: {
         refunded: entry.buyInPaid,
-        newBalance: refundResult?.newBalance
+        newBalance: refundResult.newBalance
       }
     });
 
@@ -576,7 +629,8 @@ exports.leaveTournament = async (req, res) => {
     console.error('Error saliendo del torneo:', error);
     res.status(500).json({
       success: false,
-      message: 'Error al salir del torneo'
+      message: 'Error al salir del torneo',
+      error: error.message
     });
   }
 };

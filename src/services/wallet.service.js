@@ -10,24 +10,17 @@ const {
   sequelize 
 } = require('../models');
 const { Op } = require('sequelize');
-const {
-  InsufficientBalanceError,
-  WalletFrozenError,
-  DuplicateTransactionError,
-  InvalidAmountError,
-  DailyLimitExceededError,
-  WalletNotFoundError,
-  TransactionNotReversibleError,
-  OperationNotAllowedError
-} = require('../utils/walletErrors');
-const {
-  formatMoney,
-  generateReference,
-  calculateFee,
-  checkDailyLimits,
-  generateTransactionDescription,
-  validateAmount
-} = require('../utils/walletHelpers');
+
+// Funciones helper
+const formatMoney = (amount) => {
+  return Number(parseFloat(amount).toFixed(2));
+};
+
+const generateReference = (prefix = 'TXN') => {
+  const timestamp = Date.now();
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `${prefix}_${timestamp}_${random}`.toUpperCase();
+};
 
 class WalletService {
   
@@ -73,22 +66,22 @@ class WalletService {
       });
       
       if (!wallet) {
-        throw new WalletNotFoundError(walletId);
+        throw new Error(`Wallet ${walletId} no encontrada`);
       }
       
       // 2. Validar estado de wallet
       if (wallet.status !== 'ACTIVE') {
-        throw new WalletFrozenError(`Wallet ${wallet.status}`);
+        throw new Error(`Wallet ${wallet.status}`);
       }
       
       // 3. Validar saldo suficiente
       const formattedAmount = formatMoney(amount);
       if (wallet.balance < formattedAmount) {
-        throw new InsufficientBalanceError(wallet.balance, formattedAmount);
+        throw new Error(`Saldo insuficiente. Disponible: S/ ${wallet.balance}, Requerido: S/ ${formattedAmount}`);
       }
       
       // 4. Calcular nuevo balance
-      const balanceBefore = wallet.balance;
+      const balanceBefore = parseFloat(wallet.balance);
       const balanceAfter = formatMoney(balanceBefore - formattedAmount);
       
       // 5. Crear transacción
@@ -100,7 +93,7 @@ class WalletService {
         balanceBefore,
         balanceAfter,
         status: 'COMPLETED',
-        description: description || generateTransactionDescription(category),
+        description: description || `Débito - ${category}`,
         reference,
         externalReference: generateReference(`DEB_${category}`)
       }, { transaction: dbTransaction });
@@ -108,7 +101,7 @@ class WalletService {
       // 6. Actualizar wallet
       await wallet.update({
         balance: balanceAfter,
-        totalSpent: formatMoney(wallet.totalSpent + formattedAmount),
+        totalSpent: formatMoney(parseFloat(wallet.totalSpent) + formattedAmount),
         lastTransactionAt: new Date()
       }, { transaction: dbTransaction });
       
@@ -134,17 +127,17 @@ class WalletService {
       });
       
       if (!wallet) {
-        throw new WalletNotFoundError(walletId);
+        throw new Error(`Wallet ${walletId} no encontrada`);
       }
       
       // 2. Validar estado (puede recibir dinero aunque esté frozen)
       if (wallet.status === 'CLOSED') {
-        throw new OperationNotAllowedError('credit', 'Wallet cerrada');
+        throw new Error('Wallet cerrada');
       }
       
       // 3. Calcular nuevo balance
       const formattedAmount = formatMoney(amount);
-      const balanceBefore = wallet.balance;
+      const balanceBefore = parseFloat(wallet.balance);
       const balanceAfter = formatMoney(balanceBefore + formattedAmount);
       
       // 4. Crear transacción
@@ -156,7 +149,7 @@ class WalletService {
         balanceBefore,
         balanceAfter,
         status: 'COMPLETED',
-        description: description || generateTransactionDescription(category),
+        description: description || `Crédito - ${category}`,
         reference,
         externalReference: generateReference(`CRE_${category}`)
       }, { transaction: dbTransaction });
@@ -168,9 +161,9 @@ class WalletService {
       };
       
       if (category === 'DEPOSIT') {
-        updateData.totalDeposits = formatMoney(wallet.totalDeposits + formattedAmount);
+        updateData.totalDeposits = formatMoney(parseFloat(wallet.totalDeposits) + formattedAmount);
       } else if (['TOURNAMENT_PRIZE', 'BONUS'].includes(category)) {
-        updateData.totalWinnings = formatMoney(wallet.totalWinnings + formattedAmount);
+        updateData.totalWinnings = formatMoney(parseFloat(wallet.totalWinnings) + formattedAmount);
       }
       
       await wallet.update(updateData, { transaction: dbTransaction });
@@ -194,11 +187,20 @@ class WalletService {
     try {
       // Obtener wallet del usuario
       const user = await User.findByPk(userId, { transaction: t });
-      const wallet = await user.getOrCreateWallet(t);
+      let wallet = await Wallet.findOne({ where: { userId }, transaction: t });
+      
+      if (!wallet) {
+        wallet = await this.createWallet(userId, t);
+      }
       
       // Verificar saldo
-      if (!wallet.canDebit(amount)) {
-        throw new InsufficientBalanceError(wallet.balance, amount);
+      if (parseFloat(wallet.balance) < amount) {
+        await t.rollback();
+        return {
+          success: false,
+          error: `Saldo insuficiente. Disponible: S/ ${wallet.balance}, Requerido: S/ ${amount}`,
+          available: parseFloat(wallet.balance)
+        };
       }
       
       // Obtener info del torneo
@@ -219,7 +221,7 @@ class WalletService {
       return {
         success: true,
         transaction,
-        newBalance: wallet.balance - amount
+        newBalance: parseFloat(wallet.balance) - amount
       };
       
     } catch (error) {
@@ -242,7 +244,11 @@ class WalletService {
     try {
       // Obtener wallet del usuario
       const user = await User.findByPk(userId, { transaction: t });
-      const wallet = await user.getOrCreateWallet(t);
+      let wallet = await Wallet.findOne({ where: { userId }, transaction: t });
+      
+      if (!wallet) {
+        wallet = await this.createWallet(userId, t);
+      }
       
       // Obtener info del torneo
       const tournament = await Tournament.findByPk(tournamentId, { transaction: t });
@@ -264,7 +270,7 @@ class WalletService {
       return {
         success: true,
         transaction,
-        newBalance: wallet.balance + amount
+        newBalance: parseFloat(wallet.balance) + amount
       };
       
     } catch (error) {
@@ -281,10 +287,18 @@ class WalletService {
     const t = await sequelize.transaction();
     
     try {
+      // Obtener wallet del usuario
       const user = await User.findByPk(userId, { transaction: t });
-      const wallet = await user.getOrCreateWallet(t);
+      let wallet = await Wallet.findOne({ where: { userId }, transaction: t });
+      
+      if (!wallet) {
+        wallet = await this.createWallet(userId, t);
+      }
+      
+      // Obtener info del torneo
       const tournament = await Tournament.findByPk(tournamentId, { transaction: t });
       
+      // Realizar crédito
       const transaction = await this.creditWallet(
         wallet.id,
         amount,
@@ -299,13 +313,16 @@ class WalletService {
       return {
         success: true,
         transaction,
-        newBalance: wallet.balance + amount
+        newBalance: parseFloat(wallet.balance) + amount
       };
       
     } catch (error) {
       await t.rollback();
       console.error('Error en refundTournamentEntry:', error);
-      throw error;
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
   
@@ -316,11 +333,11 @@ class WalletService {
   static async canAffordTournament(userId, amount) {
     try {
       const user = await User.findByPk(userId);
-      const wallet = await user.getWallet();
+      const wallet = await Wallet.findOne({ where: { userId } });
       
       if (!wallet) return false;
       
-      return wallet.canDebit(amount);
+      return parseFloat(wallet.balance) >= amount;
       
     } catch (error) {
       console.error('Error en canAffordTournament:', error);
@@ -330,10 +347,9 @@ class WalletService {
   
   static async getAvailableBalance(userId) {
     try {
-      const user = await User.findByPk(userId);
-      const wallet = await user.getWallet();
+      const wallet = await Wallet.findOne({ where: { userId } });
       
-      return wallet ? wallet.getAvailableBalance() : 0;
+      return wallet ? parseFloat(wallet.balance) : 0;
       
     } catch (error) {
       console.error('Error en getAvailableBalance:', error);
@@ -347,17 +363,11 @@ class WalletService {
   
   static async getWalletDashboard(userId) {
     try {
-      const user = await User.findByPk(userId, {
-        include: [{
-          model: Wallet,
-          as: 'wallet'
-        }]
-      });
+      const user = await User.findByPk(userId);
+      let wallet = await Wallet.findOne({ where: { userId } });
       
-      if (!user.wallet) {
-        // Crear wallet si no existe
-        const wallet = await this.createWallet(userId);
-        user.wallet = wallet;
+      if (!wallet) {
+        wallet = await this.createWallet(userId);
       }
       
       // Obtener torneos activos
@@ -374,7 +384,7 @@ class WalletService {
       
       // Obtener transacciones recientes
       const recentTransactions = await WalletTransaction.findAll({
-        where: { walletId: user.wallet.id },
+        where: { walletId: wallet.id },
         order: [['createdAt', 'DESC']],
         limit: 10
       });
@@ -386,7 +396,7 @@ class WalletService {
       
       const monthlyStats = await WalletTransaction.findAll({
         where: {
-          walletId: user.wallet.id,
+          walletId: wallet.id,
           createdAt: { [Op.gte]: startOfMonth },
           status: 'COMPLETED'
         },
@@ -401,7 +411,7 @@ class WalletService {
       });
       
       return {
-        wallet: user.wallet,
+        wallet,
         activeTournaments,
         recentTransactions,
         monthlyStats
@@ -420,14 +430,17 @@ class WalletService {
   static async createDepositRequest(userId, amount, method, transactionNumber, proofImageUrl) {
     try {
       // Validar monto
-      const validation = validateAmount(amount, 'DEPOSIT');
-      if (!validation.isValid) {
-        throw new InvalidAmountError(amount, validation.min, validation.max);
+      if (amount < 10 || amount > 5000) {
+        throw new Error('El monto debe estar entre S/ 10 y S/ 5000');
       }
       
       // Obtener wallet
       const user = await User.findByPk(userId);
-      const wallet = await user.getOrCreateWallet();
+      let wallet = await Wallet.findOne({ where: { userId } });
+      
+      if (!wallet) {
+        wallet = await this.createWallet(userId);
+      }
       
       // Verificar si hay solicitud pendiente
       const pendingRequest = await DepositRequest.findOne({
@@ -438,10 +451,7 @@ class WalletService {
       });
       
       if (pendingRequest) {
-        throw new OperationNotAllowedError(
-          'crear depósito',
-          'Ya tienes una solicitud de depósito pendiente'
-        );
+        throw new Error('Ya tienes una solicitud de depósito pendiente');
       }
       
       // Crear solicitud
@@ -483,11 +493,8 @@ class WalletService {
         throw new Error('Solicitud de depósito no encontrada');
       }
       
-      if (!depositRequest.canApprove()) {
-        throw new OperationNotAllowedError(
-          'aprobar depósito',
-          `Estado actual: ${depositRequest.status}`
-        );
+      if (depositRequest.status !== 'PENDING') {
+        throw new Error(`No se puede aprobar un depósito en estado ${depositRequest.status}`);
       }
       
       // Crear transacción de crédito
@@ -534,23 +541,25 @@ class WalletService {
     
     try {
       // Validar monto
-      const validation = validateAmount(amount, 'WITHDRAWAL');
-      if (!validation.isValid) {
-        throw new InvalidAmountError(amount, validation.min, validation.max);
-      }
-      
-      // Verificar límites diarios
-      const limits = await checkDailyLimits(userId, amount, 'WITHDRAWAL', WalletTransaction);
-      if (limits.wouldExceed) {
-        throw new DailyLimitExceededError(limits.limit, amount);
+      if (amount < 20 || amount > 500) {
+        throw new Error('El monto debe estar entre S/ 20 y S/ 500');
       }
       
       // Obtener wallet
       const user = await User.findByPk(userId, { transaction: t });
-      const wallet = await user.getWallet({ transaction: t });
+      let wallet = await Wallet.findOne({ 
+        where: { userId },
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
       
-      if (!wallet || !wallet.canDebit(amount)) {
-        throw new InsufficientBalanceError(wallet ? wallet.balance : 0, amount);
+      if (!wallet) {
+        wallet = await this.createWallet(userId, t);
+      }
+      
+      // Verificar saldo
+      if (parseFloat(wallet.balance) < amount) {
+        throw new Error(`Saldo insuficiente. Disponible: S/ ${wallet.balance}, Requerido: S/ ${amount}`);
       }
       
       // Verificar solicitudes pendientes
@@ -563,10 +572,7 @@ class WalletService {
       });
       
       if (pendingWithdrawal) {
-        throw new OperationNotAllowedError(
-          'crear retiro',
-          'Ya tienes una solicitud de retiro en proceso'
-        );
+        throw new Error('Ya tienes una solicitud de retiro en proceso');
       }
       
       // Crear transacción de débito (congelar fondos)
@@ -603,7 +609,7 @@ class WalletService {
       return {
         withdrawalRequest,
         walletTransaction,
-        newBalance: wallet.balance - amount
+        newBalance: parseFloat(wallet.balance) - amount
       };
       
     } catch (error) {
@@ -634,11 +640,8 @@ class WalletService {
         throw new Error('Solicitud de retiro no encontrada');
       }
       
-      if (!withdrawalRequest.canProcess()) {
-        throw new OperationNotAllowedError(
-          'procesar retiro',
-          `Estado actual: ${withdrawalRequest.status}`
-        );
+      if (withdrawalRequest.status !== 'PENDING') {
+        throw new Error(`No se puede procesar un retiro en estado ${withdrawalRequest.status}`);
       }
       
       // Actualizar solicitud a procesando
@@ -677,11 +680,8 @@ class WalletService {
         throw new Error('Solicitud de retiro no encontrada');
       }
       
-      if (!withdrawalRequest.canComplete()) {
-        throw new OperationNotAllowedError(
-          'completar retiro',
-          `Estado actual: ${withdrawalRequest.status}`
-        );
+      if (withdrawalRequest.status !== 'PROCESSING') {
+        throw new Error(`No se puede completar un retiro en estado ${withdrawalRequest.status}`);
       }
       
       // Actualizar transacción a completada
@@ -732,11 +732,8 @@ class WalletService {
         throw new Error('Solicitud de retiro no encontrada');
       }
       
-      if (!withdrawalRequest.canCancel()) {
-        throw new OperationNotAllowedError(
-          'cancelar retiro',
-          `Estado actual: ${withdrawalRequest.status}`
-        );
+      if (!['PENDING', 'PROCESSING'].includes(withdrawalRequest.status)) {
+        throw new Error(`No se puede cancelar un retiro en estado ${withdrawalRequest.status}`);
       }
       
       // Revertir la transacción (devolver fondos)
@@ -745,7 +742,7 @@ class WalletService {
         transaction: t
       });
       
-      const amountToReturn = withdrawalRequest.amount;
+      const amountToReturn = parseFloat(withdrawalRequest.amount);
       
       // Crear transacción de reversión
       await WalletTransaction.create({
@@ -753,8 +750,8 @@ class WalletService {
         type: 'CREDIT',
         category: 'WITHDRAWAL',
         amount: amountToReturn,
-        balanceBefore: wallet.balance,
-        balanceAfter: formatMoney(wallet.balance + amountToReturn),
+        balanceBefore: parseFloat(wallet.balance),
+        balanceAfter: formatMoney(parseFloat(wallet.balance) + amountToReturn),
         status: 'COMPLETED',
         description: `Reversión de retiro - ${reason}`,
         reference: `REV_${withdrawalRequest.id}`,
@@ -763,8 +760,8 @@ class WalletService {
       
       // Actualizar balance de wallet
       await wallet.update({
-        balance: formatMoney(wallet.balance + amountToReturn),
-        totalWithdrawals: formatMoney(wallet.totalWithdrawals - amountToReturn),
+        balance: formatMoney(parseFloat(wallet.balance) + amountToReturn),
+        totalWithdrawals: formatMoney(parseFloat(wallet.totalWithdrawals) - amountToReturn),
         lastTransactionAt: new Date()
       }, { transaction: t });
       
@@ -801,7 +798,11 @@ class WalletService {
     
     try {
       const user = await User.findByPk(userId, { transaction: t });
-      const wallet = await user.getOrCreateWallet(t);
+      let wallet = await Wallet.findOne({ where: { userId }, transaction: t });
+      
+      if (!wallet) {
+        wallet = await this.createWallet(userId, t);
+      }
       
       let transaction;
       
@@ -816,8 +817,8 @@ class WalletService {
         );
       } else {
         // Para débito, verificar saldo
-        if (!wallet.canDebit(Math.abs(amount))) {
-          throw new InsufficientBalanceError(wallet.balance, Math.abs(amount));
+        if (parseFloat(wallet.balance) < Math.abs(amount)) {
+          throw new Error(`Saldo insuficiente. Disponible: S/ ${wallet.balance}, Requerido: S/ ${Math.abs(amount)}`);
         }
         
         transaction = await this.debitWallet(
@@ -834,7 +835,6 @@ class WalletService {
       await transaction.update({
         createdBy: adminId,
         metadata: {
-          ...transaction.metadata,
           reason,
           adjustedAt: new Date()
         }
@@ -850,6 +850,19 @@ class WalletService {
       await t.rollback();
       console.error('Error en manualAdjustment:', error);
       throw error;
+    }
+  }
+  
+  // =====================================================
+  // OBTENER BALANCE TOTAL DEL SISTEMA
+  // =====================================================
+  static async getTotalSystemBalance() {
+    try {
+      const totalBalance = await Wallet.sum('balance') || 0;
+      return totalBalance;
+    } catch (error) {
+      console.error('Error obteniendo balance total del sistema:', error);
+      return 0;
     }
   }
 }

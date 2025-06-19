@@ -1,13 +1,17 @@
-// src/controllers/wallet.controller.js - CORREGIDO COMPLETAMENTE
+// src/controllers/wallet.controller.js - COMPLETO Y ACTUALIZADO
+
 const { 
   Wallet, 
   WalletTransaction, 
   DepositRequest, 
   WithdrawalRequest,
-  User 
+  User,
+  Tournament,
+  TournamentEntry
 } = require('../models');
 const { Op } = require('sequelize');
 const WalletService = require('../services/wallet.service');
+const sequelize = require('../config/database');
 
 // =====================================================
 // OBTENER BALANCE DEL USUARIO
@@ -16,7 +20,7 @@ exports.getBalance = async (req, res) => {
   try {
     const userId = req.user.id;
     const balance = await WalletService.getAvailableBalance(userId);
-    
+
     res.json({
       success: true,
       data: {
@@ -39,22 +43,22 @@ exports.getBalance = async (req, res) => {
 exports.getDashboard = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     // Obtener o crear wallet
     const user = await User.findByPk(userId);
-    let wallet = await user.getWallet();
-    
+    let wallet = await Wallet.findOne({ where: { userId } });
+
     if (!wallet) {
       wallet = await WalletService.createWallet(userId);
     }
-    
+
     // Obtener transacciones recientes
     const recentTransactions = await WalletTransaction.findAll({
       where: { walletId: wallet.id },
       order: [['createdAt', 'DESC']],
       limit: 10
     });
-    
+
     // Estadísticas básicas
     const stats = {
       totalTransactions: await WalletTransaction.count({ where: { walletId: wallet.id } }),
@@ -62,14 +66,27 @@ exports.getDashboard = async (req, res) => {
       totalWithdrawals: wallet.totalWithdrawals || 0,
       totalWinnings: wallet.totalWinnings || 0
     };
-    
+
+    // Obtener torneos activos
+    const activeTournaments = await TournamentEntry.findAll({
+      where: { 
+        userId,
+        status: 'ACTIVE'
+      },
+      include: [{
+        model: Tournament,
+        attributes: ['id', 'name', 'type', 'buyIn', 'prizePool', 'status']
+      }],
+      limit: 5
+    });
+
     res.json({
       success: true,
       data: {
         wallet,
         recentTransactions,
         stats,
-        activeTournaments: []
+        activeTournaments
       }
     });
   } catch (error) {
@@ -88,26 +105,25 @@ exports.getTransactionHistory = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 20, offset = 0, type, category } = req.query;
-    
+
     // Obtener wallet del usuario
-    const user = await User.findByPk(userId);
-    let wallet = await user.getWallet();
-    
+    let wallet = await Wallet.findOne({ where: { userId } });
+
     if (!wallet) {
       wallet = await WalletService.createWallet(userId);
     }
-    
+
     const where = { walletId: wallet.id };
     if (type) where.type = type;
     if (category) where.category = category;
-    
+
     const transactions = await WalletTransaction.findAndCountAll({
       where,
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
-    
+
     res.json({
       success: true,
       data: transactions.rows,
@@ -130,7 +146,7 @@ exports.createDepositRequest = async (req, res) => {
   try {
     const userId = req.user.id;
     const { amount, method, transactionNumber, proofImageUrl } = req.body;
-    
+
     const depositRequest = await WalletService.createDepositRequest(
       userId,
       amount,
@@ -138,7 +154,7 @@ exports.createDepositRequest = async (req, res) => {
       transactionNumber,
       proofImageUrl
     );
-    
+
     res.status(201).json({
       success: true,
       message: 'Solicitud de depósito creada exitosamente',
@@ -162,7 +178,7 @@ exports.createWithdrawalRequest = async (req, res) => {
   try {
     const userId = req.user.id;
     const { amount, method, accountNumber, accountName } = req.body;
-    
+
     const result = await WalletService.createWithdrawalRequest(
       userId,
       amount,
@@ -170,7 +186,7 @@ exports.createWithdrawalRequest = async (req, res) => {
       accountNumber,
       accountName
     );
-    
+
     res.status(201).json({
       success: true,
       message: 'Solicitud de retiro creada exitosamente',
@@ -192,17 +208,24 @@ exports.getUserDepositRequests = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 10, offset = 0, status } = req.query;
-    
+
     const where = { userId };
     if (status) where.status = status;
-    
+
     const deposits = await DepositRequest.findAndCountAll({
       where,
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      include: [
+        {
+          model: User,
+          as: 'processor',
+          attributes: ['id', 'name', 'email']
+        }
+      ]
     });
-    
+
     res.json({
       success: true,
       data: deposits.rows,
@@ -225,17 +248,24 @@ exports.getUserWithdrawalRequests = async (req, res) => {
   try {
     const userId = req.user.id;
     const { limit = 10, offset = 0, status } = req.query;
-    
+
     const where = { userId };
     if (status) where.status = status;
-    
+
     const withdrawals = await WithdrawalRequest.findAndCountAll({
       where,
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      include: [
+        {
+          model: User,
+          as: 'processor',
+          attributes: ['id', 'name', 'email']
+        }
+      ]
     });
-    
+
     res.json({
       success: true,
       data: withdrawals.rows,
@@ -259,21 +289,21 @@ exports.cancelWithdrawal = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
     const { reason = 'Cancelado por el usuario' } = req.body;
-    
+
     // Verificar que el retiro pertenece al usuario
     const withdrawal = await WithdrawalRequest.findOne({
       where: { id, userId }
     });
-    
+
     if (!withdrawal) {
       return res.status(404).json({
         success: false,
         message: 'Solicitud de retiro no encontrada'
       });
     }
-    
+
     const result = await WalletService.cancelWithdrawal(id, reason);
-    
+
     res.json({
       success: true,
       message: 'Solicitud de retiro cancelada exitosamente',
@@ -338,7 +368,7 @@ exports.getPaymentMethods = async (req, res) => {
         }
       }
     };
-    
+
     res.json({
       success: true,
       data: methods
@@ -358,15 +388,14 @@ exports.getPaymentMethods = async (req, res) => {
 exports.getWalletStats = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     // Obtener wallet del usuario
-    const user = await User.findByPk(userId);
-    let wallet = await user.getWallet();
-    
+    let wallet = await Wallet.findOne({ where: { userId } });
+
     if (!wallet) {
       wallet = await WalletService.createWallet(userId);
     }
-    
+
     const stats = {
       wallet: {
         balance: wallet.balance,
@@ -384,7 +413,38 @@ exports.getWalletStats = async (req, res) => {
         netFlow: 0
       }
     };
-    
+
+    // Calcular estadísticas del último mes
+    const lastMonth = new Date();
+    lastMonth.setMonth(lastMonth.getMonth() - 1);
+
+    const monthlyTransactions = await WalletTransaction.findAll({
+      where: {
+        walletId: wallet.id,
+        createdAt: { [Op.gte]: lastMonth }
+      }
+    });
+
+    stats.periodStats.transactionCount = monthlyTransactions.length;
+
+    monthlyTransactions.forEach(tx => {
+      if (tx.type === 'CREDIT') {
+        if (tx.category === 'DEPOSIT') {
+          stats.periodStats.totalDeposits += parseFloat(tx.amount);
+        } else if (tx.category === 'TOURNAMENT_PRIZE') {
+          stats.periodStats.totalPrizesWon += parseFloat(tx.amount);
+        }
+        stats.periodStats.netFlow += parseFloat(tx.amount);
+      } else if (tx.type === 'DEBIT') {
+        if (tx.category === 'WITHDRAWAL') {
+          stats.periodStats.totalWithdrawals += parseFloat(tx.amount);
+        } else if (tx.category === 'TOURNAMENT_ENTRY') {
+          stats.periodStats.totalTournamentSpent += parseFloat(tx.amount);
+        }
+        stats.periodStats.netFlow -= parseFloat(tx.amount);
+      }
+    });
+
     res.json({
       success: true,
       data: stats
@@ -413,6 +473,16 @@ exports.getAdminDashboard = async (req, res) => {
       todayTransactions: 0
     };
 
+    // Transacciones de hoy
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    stats.todayTransactions = await WalletTransaction.count({
+      where: {
+        createdAt: { [Op.gte]: today }
+      }
+    });
+
     res.json({
       success: true,
       data: stats
@@ -434,9 +504,9 @@ exports.approveDeposit = async (req, res) => {
     const { id } = req.params;
     const { adminNotes } = req.body;
     const adminId = req.user.id;
-    
+
     const result = await WalletService.approveDeposit(id, adminId, adminNotes);
-    
+
     res.json({
       success: true,
       message: 'Depósito aprobado exitosamente',
@@ -459,7 +529,7 @@ exports.rejectDeposit = async (req, res) => {
     const { id } = req.params;
     const { reason } = req.body;
     const adminId = req.user.id;
-    
+
     const depositRequest = await DepositRequest.findByPk(id);
     if (!depositRequest) {
       return res.status(404).json({
@@ -467,14 +537,14 @@ exports.rejectDeposit = async (req, res) => {
         message: 'Solicitud de depósito no encontrada'
       });
     }
-    
+
     await depositRequest.update({
       status: 'REJECTED',
       adminNotes: reason,
       processedBy: adminId,
       processedAt: new Date()
     });
-    
+
     res.json({
       success: true,
       message: 'Depósito rechazado',
@@ -497,9 +567,9 @@ exports.processWithdrawal = async (req, res) => {
     const { id } = req.params;
     const { externalTransactionId, adminNotes } = req.body;
     const adminId = req.user.id;
-    
+
     const result = await WalletService.processWithdrawal(id, adminId, externalTransactionId, adminNotes);
-    
+
     res.json({
       success: true,
       message: 'Retiro marcado como procesando',
@@ -521,9 +591,9 @@ exports.completeWithdrawal = async (req, res) => {
   try {
     const { id } = req.params;
     const { externalTransactionId } = req.body;
-    
+
     const result = await WalletService.completeWithdrawal(id, externalTransactionId);
-    
+
     res.json({
       success: true,
       message: 'Retiro completado exitosamente',
@@ -545,9 +615,9 @@ exports.rejectWithdrawal = async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
-    
+
     const result = await WalletService.cancelWithdrawal(id, reason);
-    
+
     res.json({
       success: true,
       message: 'Retiro rechazado y fondos devueltos',
@@ -569,14 +639,14 @@ exports.manualAdjustment = async (req, res) => {
   try {
     const { userId, amount, type, reason } = req.body;
     const adminId = req.user.id;
-    
+
     if (!['CREDIT', 'DEBIT'].includes(type)) {
       return res.status(400).json({
         success: false,
         message: 'Tipo debe ser CREDIT o DEBIT'
       });
     }
-    
+
     const result = await WalletService.manualAdjustment(
       userId,
       Math.abs(amount),
@@ -584,7 +654,7 @@ exports.manualAdjustment = async (req, res) => {
       reason,
       adminId
     );
-    
+
     res.json({
       success: true,
       message: 'Ajuste manual realizado exitosamente',
@@ -605,21 +675,29 @@ exports.manualAdjustment = async (req, res) => {
 exports.getAllDepositRequests = async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
-    
+
     const where = {};
     if (status) where.status = status;
-    
+
     const deposits = await DepositRequest.findAndCountAll({
       where,
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'email']
-      }],
+      include: [
+        {
+          model: User,
+          as: 'user', // Usuario que solicitó el depósito
+          attributes: ['id', 'name', 'email']
+        },
+        {
+          model: User,
+          as: 'processor', // Admin que procesó el depósito
+          attributes: ['id', 'name', 'email']
+        }
+      ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
-    
+
     res.json({
       success: true,
       data: deposits.rows,
@@ -641,21 +719,29 @@ exports.getAllDepositRequests = async (req, res) => {
 exports.getAllWithdrawalRequests = async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query;
-    
+
     const where = {};
     if (status) where.status = status;
-    
+
     const withdrawals = await WithdrawalRequest.findAndCountAll({
       where,
-      include: [{
-        model: User,
-        attributes: ['id', 'name', 'email']
-      }],
+      include: [
+        {
+          model: User,
+          as: 'user', // Usuario que solicitó el retiro
+          attributes: ['id', 'name', 'email']
+        },
+        {
+          model: User,
+          as: 'processor', // Admin que procesó el retiro
+          attributes: ['id', 'name', 'email']
+        }
+      ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: parseInt(offset)
     });
-    
+
     res.json({
       success: true,
       data: withdrawals.rows,
