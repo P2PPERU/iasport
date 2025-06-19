@@ -1,0 +1,256 @@
+{
+  "timestamp": "2025-06-19T01:55:49.525Z",
+  "environment": {
+    "node": "v22.15.1",
+    "platform": "win32",
+    "memory": {
+      "rss": 82489344,
+      "heapTotal": 27156480,
+      "heapUsed": 21669768,
+      "external": 3843206,
+      "arrayBuffers": 428990
+    }
+  },
+  "configuration": {
+    "runSetup": true,
+    "runComprehensive": true,
+    "runSecurity": true,
+    "runPerformance": true,
+    "runResources": true,
+    "generateReport": true,
+    "cleanupAfter": false
+  },
+  "results": {
+    "setup": {
+      "success": true,
+      "duration": 550,
+      "message": "Setup completado exitosamente"
+    },
+    "comprehensive": {
+      "total": 18,
+      "passed": 18,
+      "failed": 0,
+      "duration": 659
+    },
+    "security": {
+      "total": 9,
+      "passed": 8,
+      "failed": 1,
+      "critical": 0,
+      "tests": [
+        {
+          "name": "Endpoints públicos accesibles",
+          "passed": true,
+          "severity": "low",
+          "details": "Todos los endpoints públicos responden correctamente",
+          "vulnerability": null
+        },
+        {
+          "name": "Protección de endpoints privados",
+          "passed": true,
+          "severity": "critical",
+          "details": "Todos los endpoints privados están protegidos",
+          "vulnerability": null
+        },
+        {
+          "name": "Protección de endpoints de admin",
+          "passed": true,
+          "severity": "critical",
+          "details": "Todos los endpoints de admin están protegidos",
+          "vulnerability": null
+        },
+        {
+          "name": "Validación de JWT",
+          "passed": true,
+          "severity": "high",
+          "details": "Validación JWT funciona correctamente",
+          "vulnerability": null
+        },
+        {
+          "name": "Protección contra inyección SQL",
+          "passed": true,
+          "severity": "critical",
+          "details": "No se detectaron vulnerabilidades SQL",
+          "vulnerability": null
+        },
+        {
+          "name": "Rate Limiting",
+          "passed": false,
+          "severity": "medium",
+          "details": "Rate limiting no detectado - posible problema",
+          "vulnerability": "NO_RATE_LIMIT"
+        },
+        {
+          "name": "Validación de input",
+          "passed": true,
+          "severity": "high",
+          "details": "Validación de input funciona correctamente",
+          "vulnerability": null
+        },
+        {
+          "name": "Headers de seguridad",
+          "passed": true,
+          "severity": "medium",
+          "details": "Headers de seguridad configurados correctamente",
+          "vulnerability": null
+        },
+        {
+          "name": "Configuración CORS",
+          "passed": true,
+          "severity": "medium",
+          "details": "CORS configurado correctamente",
+          "vulnerability": null
+        }
+      ]
+    },
+    "performance": {
+      "tests": [
+        {
+          "testName": "Predicciones - Carga Ligera",
+          "testType": "predictions",
+          "config": {
+            "workers": 5,
+            "requestsPerWorker": 10,
+            "delayBetweenRequests": 100
+          },
+          "duration": 1434,
+          "totalRequests": 50,
+          "successfulRequests": 50,
+          "failedRequests": 0,
+          "successRate": "100.00",
+          "averageResponseTime": 13,
+          "minResponseTime": 4,
+          "maxResponseTime": 56,
+          "throughput": 35,
+          "errors": []
+        },
+        {
+          "testName": "Predicciones - Carga Pesada",
+          "testType": "predictions",
+          "config": {
+            "workers": 10,
+            "requestsPerWorker": 20,
+            "delayBetweenRequests": 50
+          },
+          "duration": 1902,
+          "totalRequests": 200,
+          "successfulRequests": 200,
+          "failedRequests": 0,
+          "successRate": "100.00",
+          "averageResponseTime": 24,
+          "minResponseTime": 4,
+          "maxResponseTime": 78,
+          "throughput": 105,
+          "errors": []
+        },
+        {
+          "testName": "Torneos - Usuarios Autenticados",
+          "testType": "tournaments",
+          "config": {
+            "workers": 8,
+            "requestsPerWorker": 15,
+            "delayBetweenRequests": 75
+          },
+          "duration": 1968,
+          "totalRequests": 120,
+          "successfulRequests": 120,
+          "failedRequests": 0,
+          "successRate": "100.00",
+          "averageResponseTime": 31,
+          "minResponseTime": 9,
+          "maxResponseTime": 128,
+          "throughput": 61,
+          "errors": []
+        },
+        {
+          "testName": "Wallet - Consultas de Balance",
+          "testType": "wallet",
+          "config": {
+            "workers": 6,
+            "requestsPerWorker": 12,
+            "delayBetweenRequests": 100
+          },
+          "duration": 1701,
+          "totalRequests": 72,
+          "successfulRequests": 72,
+          "failedRequests": 0,
+          "successRate": "100.00",
+          "averageResponseTime": 16,
+          "minResponseTime": 5,
+          "maxResponseTime": 61,
+          "throughput": 42,
+          "errors": []
+        },
+        {
+          "testName": "Admin Stats - Dashboard",
+          "testType": "admin_stats",
+          "config": {
+            "workers": 3,
+            "requestsPerWorker": 8,
+            "delayBetweenRequests": 200
+          },
+          "duration": 2052,
+          "totalRequests": 24,
+          "successfulRequests": 24,
+          "failedRequests": 0,
+          "successRate": "100.00",
+          "averageResponseTime": 27,
+          "minResponseTime": 10,
+          "maxResponseTime": 86,
+          "throughput": 12,
+          "errors": []
+        },
+        {
+          "testName": "Predicciones - Stress Extremo",
+          "testType": "predictions",
+          "config": {
+            "workers": 15,
+            "requestsPerWorker": 25,
+            "delayBetweenRequests": 25
+          },
+          "duration": 1705,
+          "totalRequests": 375,
+          "successfulRequests": 375,
+          "failedRequests": 0,
+          "successRate": "100.00",
+          "averageResponseTime": 18,
+          "minResponseTime": 4,
+          "maxResponseTime": 125,
+          "throughput": 220,
+          "errors": []
+        }
+      ],
+      "summary": {
+        "totalRequests": 841,
+        "successfulRequests": 841,
+        "failedRequests": 0,
+        "averageResponseTime": 21,
+        "minResponseTime": 4,
+        "maxResponseTime": 128,
+        "throughput": 79
+      }
+    },
+    "resources": {
+      "success": true
+    },
+    "summary": {
+      "totalTests": 28,
+      "passedTests": 27,
+      "failedTests": 1,
+      "duration": 12940,
+      "overallScore": 96
+    }
+  },
+  "recommendations": [
+    {
+      "type": "security",
+      "priority": "medium",
+      "message": "1 problemas de seguridad menores encontrados."
+    },
+    {
+      "type": "general",
+      "priority": "info",
+      "message": "Excelente! El sistema pasa casi todos los tests. Mantener buenas prácticas."
+    }
+  ]
+}

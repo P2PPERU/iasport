@@ -1,0 +1,139 @@
+{
+  "timestamp": "2025-06-19T01:49:15.016Z",
+  "environment": {
+    "node": "v22.15.1",
+    "platform": "win32",
+    "memory": {
+      "rss": 97161216,
+      "heapTotal": 57565184,
+      "heapUsed": 31950416,
+      "external": 3789495,
+      "arrayBuffers": 375279
+    }
+  },
+  "configuration": {
+    "runSetup": true,
+    "runComprehensive": true,
+    "runSecurity": true,
+    "runPerformance": true,
+    "runResources": true,
+    "generateReport": true,
+    "cleanupAfter": false
+  },
+  "results": {
+    "setup": {
+      "success": true,
+      "duration": 457,
+      "message": "Setup completado exitosamente"
+    },
+    "comprehensive": {
+      "total": 18,
+      "passed": 7,
+      "failed": 11,
+      "duration": 211
+    },
+    "security": {
+      "total": 9,
+      "passed": 5,
+      "failed": 4,
+      "critical": 1,
+      "tests": [
+        {
+          "name": "Endpoints públicos accesibles",
+          "passed": false,
+          "severity": "low",
+          "details": "Algunos endpoints fallan",
+          "vulnerability": null
+        },
+        {
+          "name": "Protección de endpoints privados",
+          "passed": true,
+          "severity": "critical",
+          "details": "Todos los endpoints privados están protegidos",
+          "vulnerability": null
+        },
+        {
+          "name": "Protección de endpoints de admin",
+          "passed": false,
+          "severity": "critical",
+          "details": "No se pudo obtener token de usuario regular para prueba",
+          "vulnerability": null
+        },
+        {
+          "name": "Validación de JWT",
+          "passed": true,
+          "severity": "high",
+          "details": "Validación JWT funciona correctamente",
+          "vulnerability": null
+        },
+        {
+          "name": "Protección contra inyección SQL",
+          "passed": true,
+          "severity": "critical",
+          "details": "No se detectaron vulnerabilidades SQL",
+          "vulnerability": null
+        },
+        {
+          "name": "Rate Limiting",
+          "passed": true,
+          "severity": "medium",
+          "details": "Rate limiting activo: 20 requests bloqueados",
+          "vulnerability": null
+        },
+        {
+          "name": "Validación de input",
+          "passed": false,
+          "severity": "high",
+          "details": "Problemas en validación de input",
+          "vulnerability": "INPUT_VALIDATION"
+        },
+        {
+          "name": "Headers de seguridad",
+          "passed": false,
+          "severity": "medium",
+          "details": "Headers faltantes/incorrectos: x-xss-protection (valor incorrecto: 0)",
+          "vulnerability": "MISSING_SECURITY_HEADERS"
+        },
+        {
+          "name": "Configuración CORS",
+          "passed": true,
+          "severity": "medium",
+          "details": "CORS configurado correctamente",
+          "vulnerability": null
+        }
+      ]
+    },
+    "resources": {
+      "success": true
+    },
+    "summary": {
+      "totalTests": 27,
+      "passedTests": 12,
+      "failedTests": 15,
+      "duration": 907,
+      "overallScore": 44
+    }
+  },
+  "recommendations": [
+    {
+      "type": "functionality",
+      "priority": "high",
+      "message": "11 tests funcionales fallaron. Revisar logs para detalles específicos."
+    },
+    {
+      "type": "security",
+      "priority": "critical",
+      "message": "1 vulnerabilidades críticas encontradas. ACCIÓN INMEDIATA REQUERIDA."
+    },
+    {
+      "type": "security",
+      "priority": "medium",
+      "message": "3 problemas de seguridad menores encontrados."
+    },
+    {
+      "type": "general",
+      "priority": "high",
+      "message": "Múltiples problemas detectados. Revisión completa del sistema recomendada."
+    }
+  ]
+}

@@ -1,57 +1,141 @@
-// src/controllers/admin.tournaments.controller.js
+// src/controllers/admin.tournaments.controller.js - CORREGIDO
 const { Tournament, TournamentEntry, TournamentPrediction, User, UserStats } = require('../models');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
 
 // =====================================================
-// OBTENER ESTADÍSTICAS DE TORNEOS
+// OBTENER ESTADÍSTICAS DE TORNEOS - CORREGIDO
 // =====================================================
 exports.getTournamentStats = async (req, res) => {
   try {
+    console.log('📊 Obteniendo estadísticas de torneos...');
+    
+    // Inicializar stats con valores por defecto
     const stats = {
       // Contadores básicos
-      totalTournaments: await Tournament.count(),
-      activeTournaments: await Tournament.count({ where: { status: 'ACTIVE' } }),
-      upcomingTournaments: await Tournament.count({ where: { status: ['UPCOMING', 'REGISTRATION'] } }),
-      finishedTournaments: await Tournament.count({ where: { status: 'FINISHED' } }),
+      totalTournaments: 0,
+      activeTournaments: 0,
+      upcomingTournaments: 0,
+      finishedTournaments: 0,
       
       // Participación
-      totalEntries: await TournamentEntry.count(),
-      activeEntries: await TournamentEntry.count({ where: { status: 'ACTIVE' } }),
+      totalEntries: 0,
+      activeEntries: 0,
       
       // Ingresos (últimos 30 días)
       monthlyRevenue: 0,
-      totalPrizesPaid: 0
+      totalPrizesPaid: 0,
+      
+      // Estadísticas por tipo
+      byType: []
     };
 
-    // Ingresos del último mes
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    // Contadores básicos de torneos - MEJORADO
+    try {
+      stats.totalTournaments = await Tournament.count();
+      stats.activeTournaments = await Tournament.count({ where: { status: 'ACTIVE' } });
+      stats.upcomingTournaments = await Tournament.count({ 
+        where: { status: { [Op.in]: ['UPCOMING', 'REGISTRATION'] } }
+      });
+      stats.finishedTournaments = await Tournament.count({ where: { status: 'FINISHED' } });
+      console.log('✅ Contadores de torneos obtenidos');
+    } catch (error) {
+      console.log('⚠️ Error en contadores de torneos:', error.message);
+      // Los valores por defecto ya están asignados
+    }
 
-    const revenueResult = await TournamentEntry.sum('buyInPaid', {
-      where: {
-        createdAt: { [Op.gte]: thirtyDaysAgo }
+    // Contadores de participación - MEJORADO
+    try {
+      stats.totalEntries = await TournamentEntry.count();
+      stats.activeEntries = await TournamentEntry.count({ where: { status: 'ACTIVE' } });
+      console.log('✅ Contadores de participación obtenidos');
+    } catch (error) {
+      console.log('⚠️ Error en contadores de participación:', error.message);
+      // Usar valores por defecto (0)
+    }
+
+    // Ingresos del último mes - MEJORADO
+    try {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const revenueResult = await TournamentEntry.sum('buyInPaid', {
+        where: {
+          createdAt: { [Op.gte]: thirtyDaysAgo }
+        }
+      });
+      stats.monthlyRevenue = revenueResult || 0;
+      console.log('✅ Revenue mensual obtenido:', stats.monthlyRevenue);
+    } catch (error) {
+      console.log('⚠️ Error calculando revenue mensual:', error.message);
+      stats.monthlyRevenue = 0;
+    }
+
+    // Total de premios pagados - MEJORADO
+    try {
+      const prizesResult = await TournamentEntry.sum('prizeWon');
+      stats.totalPrizesPaid = prizesResult || 0;
+      console.log('✅ Premios pagados obtenidos:', stats.totalPrizesPaid);
+    } catch (error) {
+      console.log('⚠️ Error calculando premios pagados:', error.message);
+      stats.totalPrizesPaid = 0;
+    }
+
+    // Estadísticas por tipo de torneo - MEJORADO
+    try {
+      const typeStats = await Tournament.findAll({
+        attributes: [
+          'type',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('prize_pool')), 0), 'totalPrizePool'],
+          [sequelize.fn('COALESCE', sequelize.fn('AVG', sequelize.col('current_players')), 0), 'avgPlayers']
+        ],
+        group: ['type'],
+        raw: true
+      });
+
+      stats.byType = typeStats.map(stat => ({
+        type: stat.type,
+        count: parseInt(stat.count) || 0,
+        totalPrizePool: parseFloat(stat.totalPrizePool) || 0,
+        avgPlayers: parseFloat(stat.avgPlayers) || 0
+      }));
+      
+      console.log('✅ Estadísticas por tipo obtenidas:', stats.byType.length, 'tipos');
+    } catch (error) {
+      console.log('⚠️ Error en estadísticas por tipo:', error.message);
+      stats.byType = [];
+    }
+
+    // Agregar información adicional útil
+    try {
+      // Calcular tasa de ocupación promedio
+      if (stats.totalTournaments > 0) {
+        const avgOccupancy = await Tournament.findOne({
+          attributes: [
+            [sequelize.fn('AVG', 
+              sequelize.literal('CASE WHEN max_players > 0 THEN (current_players::float / max_players::float) * 100 ELSE 0 END')
+            ), 'avgOccupancy']
+          ],
+          raw: true
+        });
+        
+        stats.avgOccupancy = parseFloat(avgOccupancy?.avgOccupancy) || 0;
+      } else {
+        stats.avgOccupancy = 0;
       }
+    } catch (error) {
+      console.log('⚠️ Error calculando ocupación promedio:', error.message);
+      stats.avgOccupancy = 0;
+    }
+
+    // Log final
+    console.log('✅ Estadísticas completas obtenidas:', {
+      torneos: stats.totalTournaments,
+      participaciones: stats.totalEntries,
+      revenue: stats.monthlyRevenue,
+      tipos: stats.byType.length
     });
-    stats.monthlyRevenue = revenueResult || 0;
-
-    // Total de premios pagados
-    const prizesResult = await TournamentEntry.sum('prizeWon');
-    stats.totalPrizesPaid = prizesResult || 0;
-
-    // Estadísticas por tipo de torneo
-    const typeStats = await Tournament.findAll({
-      attributes: [
-        'type',
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
-        [sequelize.fn('SUM', sequelize.col('prize_pool')), 'totalPrizePool'],
-        [sequelize.fn('AVG', sequelize.col('current_players')), 'avgPlayers']
-      ],
-      group: ['type'],
-      raw: true
-    });
-
-    stats.byType = typeStats;
 
     res.json({
       success: true,
@@ -59,10 +143,11 @@ exports.getTournamentStats = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error obteniendo estadísticas de torneos:', error);
+    console.error('❌ Error general en getTournamentStats:', error);
     res.status(500).json({
       success: false,
-      message: 'Error al obtener estadísticas'
+      message: 'Error al obtener estadísticas',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Error interno del servidor'
     });
   }
 };
