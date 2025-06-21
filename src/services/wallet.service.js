@@ -1,4 +1,4 @@
-// src/services/wallet.service.js - CORREGIDO
+// src/services/wallet.service.js - CORREGIDO PARA POSTGRESQL
 const { 
   Wallet, 
   WalletTransaction, 
@@ -620,20 +620,17 @@ class WalletService {
   }
   
   // =====================================================
-  // PROCESAR/COMPLETAR RETIRO
+  // PROCESAR RETIRO - CORREGIDO PARA POSTGRESQL
   // =====================================================
-  
   static async processWithdrawal(withdrawalRequestId, adminId, externalTransactionId, adminNotes) {
     const t = await sequelize.transaction();
     
     try {
+      // 1. ✅ Lock solo la tabla principal (SIN include)
       const withdrawalRequest = await WithdrawalRequest.findByPk(withdrawalRequestId, {
         lock: t.LOCK.UPDATE,
-        transaction: t,
-        include: [{
-          model: WalletTransaction,
-          as: 'transaction'
-        }]
+        transaction: t
+        // ❌ NO include aquí para evitar error SQL
       });
       
       if (!withdrawalRequest) {
@@ -644,7 +641,17 @@ class WalletService {
         throw new Error(`No se puede procesar un retiro en estado ${withdrawalRequest.status}`);
       }
       
-      // Actualizar solicitud a procesando
+      // 2. ✅ Consulta separada para la transacción relacionada
+      const walletTransaction = await WalletTransaction.findByPk(
+        withdrawalRequest.walletTransactionId, 
+        { transaction: t }
+      );
+      
+      if (!walletTransaction) {
+        throw new Error('Transacción de wallet no encontrada');
+      }
+      
+      // 3. ✅ Actualizar solicitud a procesando
       await withdrawalRequest.update({
         status: 'PROCESSING',
         processedBy: adminId,
@@ -653,6 +660,8 @@ class WalletService {
       }, { transaction: t });
       
       await t.commit();
+      
+      console.log(`🔄 Retiro marcado como procesando: ${withdrawalRequestId}`);
       
       return withdrawalRequest;
       
@@ -663,17 +672,17 @@ class WalletService {
     }
   }
   
+  // =====================================================
+  // COMPLETAR RETIRO - CORREGIDO PARA POSTGRESQL
+  // =====================================================
   static async completeWithdrawal(withdrawalRequestId, externalTransactionId) {
     const t = await sequelize.transaction();
     
     try {
+      // 1. ✅ Lock solo la tabla principal
       const withdrawalRequest = await WithdrawalRequest.findByPk(withdrawalRequestId, {
         lock: t.LOCK.UPDATE,
-        transaction: t,
-        include: [{
-          model: WalletTransaction,
-          as: 'transaction'
-        }]
+        transaction: t
       });
       
       if (!withdrawalRequest) {
@@ -684,17 +693,36 @@ class WalletService {
         throw new Error(`No se puede completar un retiro en estado ${withdrawalRequest.status}`);
       }
       
-      // Actualizar transacción a completada
-      await withdrawalRequest.transaction.update({
+      // 2. ✅ Consulta separada para la transacción relacionada
+      const walletTransaction = await WalletTransaction.findByPk(
+        withdrawalRequest.walletTransactionId,
+        { transaction: t }
+      );
+      
+      if (!walletTransaction) {
+        throw new Error('Transacción de wallet no encontrada');
+      }
+      
+      // 3. ✅ Actualizar transacción a completada
+      await walletTransaction.update({
         status: 'COMPLETED'
       }, { transaction: t });
       
-      // Actualizar solicitud
+      // 4. ✅ Actualizar solicitud
       await withdrawalRequest.update({
         status: 'COMPLETED',
         externalTransactionId,
         completedAt: new Date()
       }, { transaction: t });
+      
+      // 5. ✅ Actualizar totales de wallet
+      const wallet = await Wallet.findByPk(withdrawalRequest.walletId, { transaction: t });
+      if (wallet) {
+        await wallet.update({
+          totalWithdrawals: formatMoney(parseFloat(wallet.totalWithdrawals) + parseFloat(withdrawalRequest.amount)),
+          lastTransactionAt: new Date()
+        }, { transaction: t });
+      }
       
       await t.commit();
       
@@ -710,22 +738,17 @@ class WalletService {
   }
   
   // =====================================================
-  // CANCELAR RETIRO
+  // CANCELAR RETIRO - CORREGIDO PARA POSTGRESQL
   // =====================================================
-  
   static async cancelWithdrawal(withdrawalRequestId, reason) {
     const t = await sequelize.transaction();
     
     try {
+      // 1. ✅ Lock solo la tabla principal (CRÍTICO para evitar doble procesamiento)
       const withdrawalRequest = await WithdrawalRequest.findByPk(withdrawalRequestId, {
-        lock: t.LOCK.UPDATE,
-        transaction: t,
-        include: [{
-          model: WalletTransaction,
-          as: 'transaction'
-        }, {
-          model: Wallet
-        }]
+        lock: t.LOCK.UPDATE,  // ✅ SEGURIDAD FINANCIERA
+        transaction: t
+        // ❌ NO include para evitar error SQL
       });
       
       if (!withdrawalRequest) {
@@ -736,41 +759,56 @@ class WalletService {
         throw new Error(`No se puede cancelar un retiro en estado ${withdrawalRequest.status}`);
       }
       
-      // Revertir la transacción (devolver fondos)
+      // 2. ✅ Consulta separada para wallet (CON LOCK para seguridad)
       const wallet = await Wallet.findByPk(withdrawalRequest.walletId, {
-        lock: t.LOCK.UPDATE,
+        lock: t.LOCK.UPDATE,  // ✅ EVITA RACE CONDITIONS EN BALANCE
         transaction: t
       });
       
-      const amountToReturn = parseFloat(withdrawalRequest.amount);
+      if (!wallet) {
+        throw new Error('Wallet no encontrada');
+      }
       
-      // Crear transacción de reversión
+      // 3. ✅ Consulta separada para transacción relacionada
+      const walletTransaction = await WalletTransaction.findByPk(
+        withdrawalRequest.walletTransactionId,
+        { transaction: t }
+      );
+      
+      if (!walletTransaction) {
+        throw new Error('Transacción de wallet no encontrada');
+      }
+      
+      // 4. ✅ DEVOLVER FONDOS AL USUARIO (CRÍTICO)
+      const amountToReturn = parseFloat(withdrawalRequest.amount);
+      const newBalance = formatMoney(parseFloat(wallet.balance) + amountToReturn);
+      
+      // 5. ✅ Crear transacción de reversión
       await WalletTransaction.create({
         walletId: wallet.id,
         type: 'CREDIT',
         category: 'WITHDRAWAL',
         amount: amountToReturn,
         balanceBefore: parseFloat(wallet.balance),
-        balanceAfter: formatMoney(parseFloat(wallet.balance) + amountToReturn),
+        balanceAfter: newBalance,
         status: 'COMPLETED',
         description: `Reversión de retiro - ${reason}`,
         reference: `REV_${withdrawalRequest.id}`,
         externalReference: generateReference('REV_WTH')
       }, { transaction: t });
       
-      // Actualizar balance de wallet
+      // 6. ✅ Actualizar balance de wallet
       await wallet.update({
-        balance: formatMoney(parseFloat(wallet.balance) + amountToReturn),
-        totalWithdrawals: formatMoney(parseFloat(wallet.totalWithdrawals) - amountToReturn),
+        balance: newBalance,
         lastTransactionAt: new Date()
       }, { transaction: t });
       
-      // Marcar transacción original como cancelada
-      await withdrawalRequest.transaction.update({
+      // 7. ✅ Marcar transacción original como cancelada
+      await walletTransaction.update({
         status: 'CANCELLED'
       }, { transaction: t });
       
-      // Actualizar solicitud
+      // 8. ✅ Actualizar solicitud de retiro
       await withdrawalRequest.update({
         status: 'CANCELLED',
         adminNotes: reason
@@ -778,7 +816,7 @@ class WalletService {
       
       await t.commit();
       
-      console.log(`❌ Retiro cancelado: ${withdrawalRequestId}`);
+      console.log(`❌ Retiro cancelado y fondos devueltos: ${withdrawalRequestId} - S/ ${amountToReturn}`);
       
       return withdrawalRequest;
       

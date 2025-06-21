@@ -198,7 +198,7 @@ exports.createTournament = async (req, res) => {
     }
 
     // Establecer status inicial
-    tournamentData.status = registrationDeadline > now ? 'UPCOMING' : 'REGISTRATION';
+    tournamentData.status = registrationDeadline > now ? 'REGISTRATION' : 'UPCOMING';
 
     const tournament = await Tournament.create(tournamentData);
 

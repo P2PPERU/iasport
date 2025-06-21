@@ -1,4 +1,4 @@
-// test-withdrawals.js - Test completo del flujo de retiros
+// test-withdrawals.js - Test completo del flujo de retiros (CORREGIDO)
 const { apiRequest, getAuthHeaders, logSection, logSubsection, wait } = require('./test-config');
 
 let withdrawalRequestId = null;
@@ -43,6 +43,33 @@ async function testWithdrawalFlow() {
     await apiRequest('/api/wallet/payment-methods', {
       headers: getAuthHeaders(false)
     });
+
+    await wait(1000);
+
+    // 4.1. ADMIN: Cancelar solicitudes pendientes del usuario (LIMPIEZA)
+    logSubsection('4.1. Admin - Cancelar Solicitudes Pendientes del Usuario');
+    const pendingWithdrawals = await apiRequest('/api/wallet/admin/withdrawals?status=PENDING', {
+      headers: getAuthHeaders(true)
+    });
+
+    if (pendingWithdrawals.success && pendingWithdrawals.data.data.length > 0) {
+      for (const withdrawal of pendingWithdrawals.data.data) {
+        if (withdrawal.userId === 'd3962b07-2e25-48d6-8814-1a3e2aadedfe') {
+          console.log(`   ✅ Cancelando solicitud pendiente: ${withdrawal.id}`);
+          await apiRequest(`/api/wallet/admin/withdrawals/${withdrawal.id}/reject`, {
+            method: 'PUT',
+            headers: getAuthHeaders(true),
+            body: JSON.stringify({
+              reason: 'Cancelado para test limpio'
+            })
+          });
+          await wait(500);
+        }
+      }
+      console.log('✅ Solicitudes pendientes limpiadas');
+    } else {
+      console.log('ℹ️ No hay solicitudes pendientes que limpiar');
+    }
 
     await wait(1000);
 
@@ -204,6 +231,8 @@ async function testWithdrawalFlow() {
     if (cancelRequest.success) {
       cancelRequestId = cancelRequest.data.data.withdrawalRequest.id;
       console.log('✅ Solicitud para cancelar creada:', cancelRequestId);
+    } else {
+      console.log('⚠️ No se pudo crear segunda solicitud (esperado si el flujo principal falló)');
     }
 
     await wait(1000);
@@ -218,6 +247,9 @@ async function testWithdrawalFlow() {
           reason: 'Solicitud rechazada para pruebas - fondos devueltos'
         })
       });
+    } else {
+      logSubsection('19. Admin - Rechazar Solicitud (SALTADO - No hay solicitud)');
+      console.log('ℹ️ No hay solicitud de cancelación para rechazar');
     }
 
     await wait(1000);
@@ -236,7 +268,32 @@ async function testWithdrawalFlow() {
       headers: getAuthHeaders(false)
     });
 
+    await wait(1000);
+
+    // 22. LIMPIEZA FINAL: Asegurar que no queden solicitudes pendientes
+    logSubsection('22. Admin - Limpieza Final');
+    const finalPendingWithdrawals = await apiRequest('/api/wallet/admin/withdrawals?status=PENDING', {
+      headers: getAuthHeaders(true)
+    });
+
+    if (finalPendingWithdrawals.success && finalPendingWithdrawals.data.data.length > 0) {
+      for (const withdrawal of finalPendingWithdrawals.data.data) {
+        if (withdrawal.userId === 'd3962b07-2e25-48d6-8814-1a3e2aadedfe') {
+          console.log(`   🧹 Limpieza final: cancelando ${withdrawal.id}`);
+          await apiRequest(`/api/wallet/admin/withdrawals/${withdrawal.id}/reject`, {
+            method: 'PUT',
+            headers: getAuthHeaders(true),
+            body: JSON.stringify({
+              reason: 'Limpieza automática post-test'
+            })
+          });
+          await wait(500);
+        }
+      }
+    }
+
     console.log('\n✅ Test de flujo completo de retiros completado');
+    console.log('🧹 Limpieza finalizada - listo para siguientes tests');
 
   } catch (error) {
     console.error('❌ Error en test de retiros:', error);

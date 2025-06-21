@@ -57,16 +57,7 @@ class TournamentJobs {
         let updated = 0;
 
         // UPCOMING → REGISTRATION
-        const upcomingToRegistration = await Tournament.update(
-          { status: 'REGISTRATION' },
-          {
-            where: {
-              status: 'UPCOMING',
-              registrationDeadline: { [Op.lte]: now }
-            }
-          }
-        );
-        updated += upcomingToRegistration[0];
+        
 
         // REGISTRATION → ACTIVE
         const registrationToActive = await Tournament.update(
@@ -74,7 +65,7 @@ class TournamentJobs {
           {
             where: {
               status: 'REGISTRATION',
-              startTime: { [Op.lte]: now }
+              registrationDeadline: { [Op.lte]: now }
             }
           }
         );

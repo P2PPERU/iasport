@@ -1,4 +1,4 @@
-// server.js - COMPATIBLE CON TESTS
+// server.js - PRODUCCIÓN READY v2.0
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -177,7 +177,8 @@ app.get('/health', async (req, res) => {
         pushNotifications: true,
         tournaments: true,
         wallet: true,
-        payments: true
+        payments: true,
+        predictionResults: true
       }
     });
   } catch (error) {
@@ -229,6 +230,14 @@ app.get('/', (req, res) => {
         tournaments: 'GET /api/admin/tournaments/stats',
         wallet: 'GET /api/wallet/admin/deposits'
       },
+      predictionResults: {
+        pending: 'GET /api/prediction-results/pending',
+        update: 'PUT /api/prediction-results/:id/result',
+        batch: 'PUT /api/prediction-results/batch/results',
+        stats: 'GET /api/prediction-results/stats',
+        history: 'GET /api/prediction-results/history',
+        revert: 'PUT /api/prediction-results/:id/revert'
+      },
       notifications: {
         vapidKey: 'GET /api/notifications/vapid-public-key',
         subscribe: 'POST /api/notifications/subscribe'
@@ -237,7 +246,7 @@ app.get('/', (req, res) => {
   });
 });
 
-// Rutas de la API
+// ✅ RUTAS DE LA API - TODAS REGISTRADAS
 app.use('/api/auth', require('./src/routes/auth.routes'));
 app.use('/api/predictions', require('./src/routes/predictions.routes'));
 app.use('/api/tournaments', require('./src/routes/tournaments.routes'));
@@ -245,6 +254,7 @@ app.use('/api/users', require('./src/routes/users.routes'));
 app.use('/api/admin', require('./src/routes/admin.routes'));
 app.use('/api/notifications', require('./src/routes/notifications.routes'));
 app.use('/api/wallet', require('./src/routes/wallet.routes'));
+app.use('/api/prediction-results', require('./src/routes/predictionResults.routes')); // ✅ AGREGADO
 
 // Manejo de rutas no encontradas
 app.use((req, res, next) => {
@@ -349,6 +359,7 @@ const startServer = async () => {
       console.log(`   - Torneos: GET http://localhost:${PORT}/api/tournaments`);
       console.log(`   - Wallet: GET http://localhost:${PORT}/api/wallet/balance`);
       console.log(`   - Login: POST http://localhost:${PORT}/api/auth/login`);
+      console.log(`   - Results: PUT http://localhost:${PORT}/api/prediction-results/:id/result`);
       console.log('\n💡 Usa Ctrl+C para detener el servidor');
     });
   } catch (error) {
