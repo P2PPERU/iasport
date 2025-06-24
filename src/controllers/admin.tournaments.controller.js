@@ -224,19 +224,20 @@ exports.createTournament = async (req, res) => {
 exports.getAllTournaments = async (req, res) => {
   try {
     const { status, type, dateFrom, dateTo, limit = 50, offset = 0 } = req.query;
-    
+
     const where = {};
-    
+
     if (status) where.status = status;
     if (type) where.type = type;
-    
+
     if (dateFrom || dateTo) {
       where.startTime = {};
       if (dateFrom) where.startTime[Op.gte] = new Date(dateFrom);
       if (dateTo) where.startTime[Op.lte] = new Date(dateTo);
     }
 
-    const tournaments = await Tournament.findAndCountAll({
+    // Usar findAll + count (NO findAndCountAll, porque da errores con group)
+    const tournaments = await Tournament.findAll({
       where,
       include: [{
         model: TournamentEntry,
@@ -252,21 +253,26 @@ exports.getAllTournaments = async (req, res) => {
       group: ['Tournament.id'],
       order: [['created_at', 'DESC']],
       limit: parseInt(limit),
-      offset: parseInt(offset)
+      offset: parseInt(offset),
+      subQuery: false // CLAVE para evitar errores de subquery con group
     });
+
+    // Total filtrados
+    const totalFiltered = await Tournament.count({ where });
 
     res.json({
       success: true,
-      data: tournaments.rows,
-      total: tournaments.count.length,
-      hasMore: (parseInt(offset) + parseInt(limit)) < tournaments.count.length
+      data: tournaments,
+      total: totalFiltered,
+      hasMore: (parseInt(offset) + parseInt(limit)) < totalFiltered
     });
 
   } catch (error) {
     console.error('Error obteniendo torneos:', error);
     res.status(500).json({
       success: false,
-      message: 'Error al obtener torneos'
+      message: 'Error al obtener torneos',
+      error: error.message
     });
   }
 };
